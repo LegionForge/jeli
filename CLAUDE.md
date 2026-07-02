@@ -4,22 +4,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
-## Project: Jeli — LegionForge Personal Memory Framework
+## Project: Jeli — Security & Governance Layer for Personal Memory
 
 **Repository:** https://github.com/LegionForge/jeli
 
-**Vision:** A seamless, sovereign, cryptographically-attested personal memory system that captures everything, forgets nothing useful, surfaces insights automatically, and plugs into any agent — requiring zero extra effort from the user.
+**Vision:** A cryptographically-attested security and governance layer that makes personal memory systems trustworthy, verifiable, and sovereign — detecting corruption, preventing poisoning, and giving users structural veto over irreversible agent actions.
+
+**Status:** Exploring partnership with [OB1](https://github.com/NateBJones-Projects/OB1) (by Nate B. Jones) as an optional, installable security extension. Can also be deployed standalone.
 
 **Core Problem Being Solved:**
-- Major platforms (Apple, Microsoft, Google, OpenAI, Anthropic) are converging on the same play: capture user behavior, preferences, context inside their walled gardens, and use it to serve you better **on their terms** — or worse, mine it for personalization at scale, sell as signals to advertisers, or share with insurers and lenders.
-- Once your memory lives in Apple Intelligence or Copilot, you cannot leave without losing years of accumulated context. The vendor controls the format, API, deletion policy, and can change all of this unilaterally.
+- **Vendor lock-in:** Apple Intelligence, Copilot, and other closed systems hold your memories hostage. You cannot leave without losing years of context.
+- **Memory poisoning:** As of 2026, documented attacks exist (MINJA, Microsoft Rec Poisoning, Palo Alto IJPI) that silently corrupt long-term memory in AI agents — potentially for months undetected.
+- **No trustworthiness:** Personal memory systems lack cryptographic guarantees. Users have no way to verify memories haven't been corrupted, manipulated, or poisoned.
+- **No user veto:** Agents can take irreversible actions (delete, modify, share) without user control.
 
-**The Jeli Alternative:**
-- **User owns the data** — full schema access, full export, no proprietary format lock-in
-- **Architecture makes exfiltration detectable** — cryptographic provenance traces every memory to its origin
-- **No single vendor required** — any component (storage, inference, agents) can be swapped
-- **Independence is structural** — sovereignty enforced by the system, not promised by ToS
-- **Open standard** — others can adopt it; not forced into vendor memory systems
+**The Jeli Solution:**
+- **Cryptographic integrity** — hash-chains detect silent corruption; contradictions are flagged immediately
+- **Verifiable provenance** — every memory traces to its origin with full audit trail
+- **Trust scoring** — distinguish user-stated (1.0) from agent-inferred (0.6) from external (0.3)
+- **Amendment tracking** — facts evolve, never delete; full history preserved
+- **User veto** — user controls irreversible agent actions via Constitutional layer
+- **Structural sovereignty** — security enforced by architecture, not promises
 
 ---
 
@@ -58,7 +63,7 @@ Each branch has a distinct role; none can override its own constraints; all thre
 
 **Executive (Agents):** Hermes, Claude, future agents. Propose memories; cannot write directly to canonical store; bound by judicial precedent.
 
-**Legislative (Memory Store):** OB1/lf2b (Postgres + pgvector). Canonical source of preferences, facts, constraints. Append-only hash chain with full provenance. Three tiers: Constitutional → Statutes (slow-change preferences) → Case law (precedents).
+**Legislative (Memory Store):** Postgres + pgvector (optionally OB1). Canonical source of preferences, facts, constraints. Append-only hash chain with full provenance. Three tiers: Constitutional → Statutes (slow-change preferences) → Case law (precedents). If using OB1, Jeli layers security on top without modifying OB1's core design.
 
 **Judicial (Conflict Resolution):** Arbitrates contradictions using trust scores, recency, source authority, and precedent. All rulings logged with reasoning. User-appealable.
 
@@ -224,7 +229,7 @@ Polyglot-lite pattern — use right tool for each job:
 
 ### Hermes Pre-Integration (Critical)
 
-Hermes integration with Jeli carries **HIGH RISK** without mitigations. See `Library/AI/projects/hermes_vulnerability_assessment.md` for full threat model.
+Hermes integration with Jeli carries **HIGH RISK** without mitigations. Review your threat model document before beginning integration work.
 
 **Tier 1 Mitigations (Required Before Connecting):**
 
@@ -249,7 +254,7 @@ Hermes integration with Jeli carries **HIGH RISK** without mitigations. See `Lib
 
 4. **Filesystem write boundary.** Set `HERMES_WRITE_SAFE_ROOT` to non-vault directory.
    ```bash
-   HERMES_WRITE_SAFE_ROOT=/Users/jp/hermes-workspace
+   HERMES_WRITE_SAFE_ROOT=~/hermes-workspace
    ```
 
 5. **Harden file permissions immediately.**
@@ -275,8 +280,6 @@ Hermes integration with Jeli carries **HIGH RISK** without mitigations. See `Lib
 - Install from pinned tag, not `main`: `uv pip install -e "." --pinned`
 
 ### Data Integrity Rules (Non-Negotiable)
-
-From `Library/AI/memory/lessons/lessons-data.md`:
 
 1. **Embedding provenance:** Every embedding triple (model, dimensions, embedded_at) stored alongside vector
 2. **Never delete facts:** Temporal invalidation only (valid_until + superseded_by)
@@ -354,11 +357,11 @@ Once code structure is established, populate with:
 
 ## References & Canonical Docs
 
-**In Obsidian Vault:**
-- `Library/AI/projects/legionforge-memory-framework-vision.md` — Full vision, technical decisions, 4-layer architecture, integrity model, event sourcing design
-- `Library/AI/memory/lessons/lessons-security.md` — Security posture, API key management, software evaluation discipline
-- `Library/AI/memory/lessons/lessons-data.md` — Database, embedding, memory architecture lessons for storage adapter design
-- `Library/AI/projects/hermes_vulnerability_assessment.md` — Why Hermes pre-integration security is critical; Scoped MCP is first build
+**In your vault (if using a note-taking system):**
+- Project vision doc — full 4-layer architecture, integrity model, event sourcing design
+- Security posture notes — API key management, software evaluation discipline
+- Data integrity lessons — embedding, memory architecture guidelines
+- Hermes vulnerability assessment — why pre-integration security is critical; Scoped MCP is first build
 
 **Public References:**
 - [LegionForge GitHub](https://github.com/LegionForge)
@@ -372,11 +375,12 @@ Once code structure is established, populate with:
 
 ## First Build: Scoped MCP Server (Blocking Other Work)
 
-Per `hermes_vulnerability_assessment.md`, the **Scoped MCP is the first thing to build** because:
+The **Scoped MCP is the first thing to build** because:
 
 1. **Blast radius problem:** Hermes has unrestricted filesystem read/write and shell access. Without a boundary, every system it connects to is at risk.
 2. **MCP solves this structurally:** Define exactly which tools Hermes can call (e.g., memory search + capture, no shell, no arbitrary file access). The MCP server enforces the boundary.
-3. **Required before Hermes integration:** Until the Scoped MCP exists, do not connect Hermes to the memory system.
+3. **Jeli's enforcement layer:** Scoped MCP enforces Jeli's security guarantees (hash-chain validation, contradiction detection, injection defense) before memories are written.
+4. **Required before Hermes integration:** Until the Scoped MCP exists, do not connect Hermes to the memory system.
 
 **Scoped MCP deliverable:**
 - Tool: `capture_memory(content, metadata, trust_score)` — write to append-only log
@@ -408,7 +412,7 @@ Per `hermes_vulnerability_assessment.md`, the **Scoped MCP is the first thing to
 
 When working on this repo, ensure:
 
-1. **Obsidian vault is current** — check `Library/AI/memory/!startup.md` for active project state
+1. **Obsidian vault is current** — check your vault's project context note for active project state
 2. **Hermes is sandboxed** — before any integration work, Tier 1 mitigations must be in place
 3. **OB1/lf2b is available** — for testing, ensure Postgres + pgvector is running and MCP server at port 8100 is live
 4. **No public commits without scrub** — check for internal IPs, SSH details, API keys before git push (global CLAUDE.md has the grep command)

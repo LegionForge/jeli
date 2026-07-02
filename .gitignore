@@ -1,0 +1,9 @@
+.claude/worktrees/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.coverage
+htmlcov/
+.pytest_cache/
+.env
