@@ -45,8 +45,11 @@ class Settings(BaseSettings):
 
     def validate_required(self):
         """Validate that all required settings are present."""
-        if not self.api_key:
-            raise ValueError("SCOPED_MCP_API_KEY is required")
+        # stdio's auth boundary is process spawn; the API key guards the
+        # (future) HTTP transport only — requiring it for stdio would be
+        # security theater.
+        if self.transport == "http" and not self.api_key:
+            raise ValueError("SCOPED_MCP_API_KEY is required for http transport")
         if not self.chain_key:
             raise ValueError("SCOPED_MCP_CHAIN_KEY is required (hash-chain HMAC key)")
         if self.embedding_provider == "openai" and not self.openai_api_key:

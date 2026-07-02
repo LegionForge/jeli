@@ -42,6 +42,9 @@ VALID_MEMORY_TYPES = {
 
 SEARCH_MODES = {"fts"}  # "semantic" arrives with the pgvector migration
 
+# Advisory lock key for chain writes (arbitrary constant, one per chain).
+CHAIN_WRITE_LOCK = 0x4A454C49  # "JELI"
+
 
 class MemoryToolError(Exception):
     """Raised for invalid tool input; message is safe to return to the agent."""
@@ -50,8 +53,8 @@ class MemoryToolError(Exception):
 class MemoryTools:
     """Write/read paths for the scoped MCP tools.
 
-    Phase 1 assumes a single writer (one MCP server process); the prev-hash
-    read and insert are not serialized across processes.
+    Chain writes are serialized across processes via a Postgres advisory
+    lock (see capture_memory), so multiple agents may write concurrently.
     """
 
     def __init__(
@@ -116,70 +119,74 @@ class MemoryTools:
                 f"model {embedding.model_id}"
             )
 
-        prev_hash = await self.db.fetchval(
-            "SELECT record_hash FROM memory_entry ORDER BY created_at DESC, id DESC LIMIT 1"
-        )
-        canonical = build_canonical_record(
-            content=content,
-            embedding_model=embedding.model_id,
-            embedding_dimensions=embedding.dimensions,
-            trust_score=trust,
-            memory_type=memory_type,
-            key_id=self.key_id,
-            metadata=meta or None,
-        )
-        record_hash = compute_record_hash(self.chain_key, canonical, prev_hash)
-
-        row = await self.db.fetchrow(
-            """
-            INSERT INTO memory_entry (
-                content, content_hash, embedding, embedding_model,
-                embedding_dimensions, embedded_at, metadata, trust_score,
-                memory_type, prev_hash, record_hash, created_by,
-                session_id, source_agent, key_id
-            ) VALUES (
-                $1, $2, $3::jsonb, $4,
-                $5, $6, $7::jsonb, $8,
-                $9, $10, $11, $12,
-                $13, $14, $15
+        # prev-hash read + insert are serialized under an advisory lock:
+        # without it, two concurrent writers reuse the same prev_hash and
+        # fork the chain, making legitimate data fail verification.
+        async with self.db.locked_transaction(CHAIN_WRITE_LOCK) as conn:
+            prev_hash = await conn.fetchval(
+                "SELECT record_hash FROM memory_entry ORDER BY created_at DESC, id DESC LIMIT 1"
             )
-            RETURNING id, created_at
-            """,
-            content,
-            hashlib.sha256(content.encode()).hexdigest(),
-            json.dumps(embedding.vector),
-            embedding.model_id,
-            embedding.dimensions,
-            embedding.embedded_at,
-            json.dumps(meta),
-            trust,
-            memory_type,
-            prev_hash,
-            record_hash,
-            actor,
-            session_id,
-            source_agent,
-            self.key_id,
-        )
-        if row is None:
-            raise MemoryToolError("insert failed: no row returned")
+            canonical = build_canonical_record(
+                content=content,
+                embedding_model=embedding.model_id,
+                embedding_dimensions=embedding.dimensions,
+                trust_score=trust,
+                memory_type=memory_type,
+                key_id=self.key_id,
+                metadata=meta or None,
+            )
+            record_hash = compute_record_hash(self.chain_key, canonical, prev_hash)
 
-        await self.db.execute(
-            """
-            INSERT INTO memory_audit_log (memory_id, action, actor, source_session, details)
-            VALUES ($1, 'created', $2, $3, $4::jsonb)
-            """,
-            row["id"],
-            actor,
-            session_id,
-            json.dumps(
-                {
-                    "source_agent": source_agent,
-                    "trust_score": trust,
-                    "injection_flagged": flagged,
-                }
-            ),
-        )
+            row = await conn.fetchrow(
+                """
+                INSERT INTO memory_entry (
+                    content, content_hash, embedding, embedding_model,
+                    embedding_dimensions, embedded_at, metadata, trust_score,
+                    memory_type, prev_hash, record_hash, created_by,
+                    session_id, source_agent, key_id
+                ) VALUES (
+                    $1, $2, $3::jsonb, $4,
+                    $5, $6, $7::jsonb, $8,
+                    $9, $10, $11, $12,
+                    $13, $14, $15
+                )
+                RETURNING id, created_at
+                """,
+                content,
+                hashlib.sha256(content.encode()).hexdigest(),
+                json.dumps(embedding.vector),
+                embedding.model_id,
+                embedding.dimensions,
+                embedding.embedded_at,
+                json.dumps(meta),
+                trust,
+                memory_type,
+                prev_hash,
+                record_hash,
+                actor,
+                session_id,
+                source_agent,
+                self.key_id,
+            )
+            if row is None:
+                raise MemoryToolError("insert failed: no row returned")
+
+            await conn.execute(
+                """
+                INSERT INTO memory_audit_log (memory_id, action, actor, source_session, details)
+                VALUES ($1, 'created', $2, $3, $4::jsonb)
+                """,
+                row["id"],
+                actor,
+                session_id,
+                json.dumps(
+                    {
+                        "source_agent": source_agent,
+                        "trust_score": trust,
+                        "injection_flagged": flagged,
+                    }
+                ),
+            )
 
         logger.info(
             "capture_memory: id=%s type=%s trust=%.2f flagged=%s actor=%s",
@@ -220,7 +227,7 @@ class MemoryTools:
         rows = await self.db.fetchall(
             """
             SELECT id, content, trust_score, memory_type, created_at,
-                   created_by, source_agent
+                   created_by, source_agent, metadata
             FROM memory_entry
             WHERE valid_until IS NULL
               AND content ILIKE '%' || $1 || '%'
@@ -233,6 +240,9 @@ class MemoryTools:
 
         results = []
         for r in rows:
+            r_meta = r["metadata"]
+            if isinstance(r_meta, str):
+                r_meta = json.loads(r_meta)
             results.append(
                 {
                     "id": str(r["id"]),
@@ -241,6 +251,9 @@ class MemoryTools:
                     "memory_type": r["memory_type"],
                     "created_at": r["created_at"].isoformat(),
                     "source": r["source_agent"] or r["created_by"],
+                    # read-time quarantine signal: consumers should treat
+                    # flagged content as untrusted input, not instructions
+                    "injection_flagged": bool((r_meta or {}).get("injection_flagged")),
                 }
             )
             await self.db.execute(

@@ -1,5 +1,6 @@
 """Async PostgreSQL connection pooling via asyncpg."""
 
+from contextlib import asynccontextmanager
 from typing import Any
 
 import asyncpg
@@ -57,6 +58,21 @@ class AsyncPostgresPool:
             raise RuntimeError("Connection pool not initialized")
         async with self.pool.acquire() as conn:
             return await conn.fetchval(query, *args)
+
+    @asynccontextmanager
+    async def locked_transaction(self, lock_key: int):
+        """One transaction holding a pg advisory lock — serializes chain writes.
+
+        The prev-hash read and the insert must be atomic or two concurrent
+        writers fork the chain (same prev_hash twice) and verify_chain flags
+        legitimate data as tampered.
+        """
+        if not self.pool:
+            raise RuntimeError("Connection pool not initialized")
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("SELECT pg_advisory_xact_lock($1)", lock_key)
+                yield conn
 
     async def health_check(self) -> bool:
         """Check if pool is healthy."""
