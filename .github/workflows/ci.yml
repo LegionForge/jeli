@@ -37,3 +37,33 @@ jobs:
 
   sbom:
     uses: LegionForge/dev-rig/.github/workflows/sbom.yml@main
+
+  integration:
+    name: Integration (live Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: ci-throwaway
+          POSTGRES_DB: jeli_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      JELI_TEST_DB_URL: postgresql://postgres:ci-throwaway@127.0.0.1:5432/jeli_test
+      SCOPED_MCP_DB_URL: postgresql://postgres:ci-throwaway@127.0.0.1:5432/jeli_test
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev]" sqlalchemy psycopg2-binary
+      - run: python -m alembic upgrade head
+      - run: python -m pytest tests/integration/ -v --no-cov

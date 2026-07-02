@@ -73,7 +73,11 @@ def upgrade() -> None:
     )
 
     # Indices for memory_audit_log
-    op.create_index("idx_audit_memory", "memory_audit_log", ["memory_id", "timestamp"], postgresql_using="DESC")
+    op.create_index(
+        "idx_audit_memory",
+        "memory_audit_log",
+        ["memory_id", sa.text("timestamp DESC")],
+    )
 
     # memory_contradiction — Unresolved contradictions (flags for Judicial layer)
     op.create_table(
