@@ -2,6 +2,7 @@
 
 import asyncio
 import sys
+
 from .config import get_settings
 
 
@@ -11,9 +12,9 @@ async def main():
         settings = get_settings()
 
         # Import server components
-        from .server.mcp_server import ScopedMCPServer
         from .database.pool import AsyncPostgresPool
         from .embedding.provider import EmbeddingProvider
+        from .server.mcp_server import ScopedMCPServer
 
         # Initialize components
         db = AsyncPostgresPool(

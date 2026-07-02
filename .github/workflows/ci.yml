@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# SARIF-uploading jobs override with security-events: write.
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    uses: LegionForge/dev-rig/.github/workflows/lint.yml@main
+    with:
+      source-dirs: "src/jeli_scoped_mcp"
+
+  test:
+    uses: LegionForge/dev-rig/.github/workflows/test.yml@main
+    with:
+      coverage-source: "src/jeli_scoped_mcp"
+      coverage-threshold: 70
+
+  sast:
+    uses: LegionForge/dev-rig/.github/workflows/sast.yml@main
+    with:
+      source-dirs: "src/jeli_scoped_mcp"
+    permissions:
+      security-events: write
+
+  audit:
+    uses: LegionForge/dev-rig/.github/workflows/audit.yml@main
+
+  secrets:
+    uses: LegionForge/dev-rig/.github/workflows/secrets.yml@main
+
+  sbom:
+    uses: LegionForge/dev-rig/.github/workflows/sbom.yml@main

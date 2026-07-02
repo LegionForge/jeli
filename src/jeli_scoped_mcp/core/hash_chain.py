@@ -3,9 +3,6 @@
 import hashlib
 import hmac
 import json
-from datetime import datetime
-from typing import Optional
-from uuid import UUID
 
 
 def canonical_json(obj: dict) -> str:
@@ -20,7 +17,7 @@ def canonical_json(obj: dict) -> str:
 def compute_record_hash(
     chain_key: str,
     canonical_content: str,
-    prev_record_hash: Optional[str] = None,
+    prev_record_hash: str | None = None,
 ) -> str:
     """
     Compute HMAC-SHA256 for a memory record, forming the hash-chain.
@@ -57,7 +54,7 @@ def build_canonical_record(
     embedding_dimensions: int,
     trust_score: float,
     memory_type: str,
-    metadata: Optional[dict] = None,
+    metadata: dict | None = None,
 ) -> str:
     """
     Build canonical JSON representation for hashing.
@@ -99,7 +96,7 @@ class HashChainValidator:
         self,
         canonical_content: str,
         record_hash: str,
-        prev_record_hash: Optional[str] = None,
+        prev_record_hash: str | None = None,
     ) -> bool:
         """
         Verify a record's hash matches expected value.
@@ -122,7 +119,7 @@ class HashChainValidator:
     def validate_chain(
         self,
         records: list[dict],
-    ) -> tuple[bool, Optional[str]]:
+    ) -> tuple[bool, str | None]:
         """
         Validate entire chain integrity.
 
@@ -140,9 +137,9 @@ class HashChainValidator:
             return True, None
 
         prev_hash = None
-        for i, record in enumerate(records):
-            canonical_content = record.get("canonical_content")
-            record_hash = record.get("record_hash")
+        for record in records:
+            canonical_content = str(record.get("canonical_content") or "")
+            record_hash = str(record.get("record_hash") or "")
             record_id = record.get("id")
 
             if not self.validate_record(canonical_content, record_hash, prev_hash):
@@ -162,7 +159,7 @@ class AmendmentTracker:
         new_trust_score: float,
         old_canonical: str,
         new_canonical: str,
-    ) -> tuple[bool, Optional[str]]:
+    ) -> tuple[bool, str | None]:
         """
         Determine if a new record is an amendment of an old one.
 
@@ -219,5 +216,5 @@ class AmendmentTracker:
         if len(old_embedding) != len(new_embedding):
             raise ValueError("Embedding dimensions must match")
 
-        sum_sq = sum((new - old) ** 2 for old, new in zip(old_embedding, new_embedding))
-        return sum_sq ** 0.5
+        sum_sq = sum((new - old) ** 2 for old, new in zip(old_embedding, new_embedding, strict=True))
+        return float(sum_sq**0.5)

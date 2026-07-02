@@ -1,10 +1,8 @@
 """Contradiction detection: identify conflicting memories for Judicial review."""
 
-import json
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 
 class ContradictionType(Enum):
@@ -65,7 +63,7 @@ class ContradictionDetector:
     def are_direct_contradictions(
         affinity1: dict,
         affinity2: dict,
-    ) -> tuple[bool, Optional[str]]:
+    ) -> tuple[bool, str | None]:
         """
         Detect direct contradictions between two affinity sets.
 
@@ -130,7 +128,7 @@ class ContradictionDetector:
     def detect_temporal_contradiction(
         old_memory: dict,
         new_memory: dict,
-    ) -> tuple[bool, Optional[str]]:
+    ) -> tuple[bool, str | None]:
         """
         Detect temporal contradictions (old fact contradicted by new evidence).
 
@@ -185,7 +183,7 @@ class ContradictionDetector:
         old_trust: float,
         new_trust: float,
         trust_delta_threshold: float = 0.4,
-    ) -> tuple[bool, Optional[str]]:
+    ) -> tuple[bool, str | None]:
         """
         Detect trust conflicts (same fact, vastly different trust scores).
 
@@ -232,8 +230,8 @@ class ContradictionClassifier:
         new_content = new_memory.get("content", "")
         old_trust = old_memory.get("trust_score", 0.5)
         new_trust = new_memory.get("trust_score", 0.5)
-        old_id = old_memory.get("id")
-        new_id = new_memory.get("id")
+        old_id = str(old_memory.get("id") or "")
+        new_id = str(new_memory.get("id") or "")
 
         # Detect direct contradictions
         is_direct, reason = ContradictionDetector.detect_temporal_contradiction(

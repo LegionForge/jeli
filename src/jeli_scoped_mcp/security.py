@@ -1,9 +1,7 @@
 """Security layer: API key validation, injection defense, input sanitization."""
 
 import hmac
-import hashlib
 import re
-from typing import Optional, Tuple
 
 
 class APIKeyValidator:
@@ -103,14 +101,11 @@ class InjectionDefense:
             if re.search(rf"\b{keyword}\b", query_upper):
                 raise ValueError(f"Dangerous keyword '{keyword}' detected in query")
 
-        # Validate column references (simple check)
-        # Look for patterns like "column_name >" to validate columns
-        for col_pattern in cls.ALLOWED_SQL_COLUMNS:
-            # This is a simplified check; real implementation would be more sophisticated
-            pass
+        # Column whitelist enforcement (ALLOWED_SQL_COLUMNS) arrives with
+        # the sql search mode; fts mode never reaches raw SQL.
 
     @classmethod
-    def sanitize_content(cls, content: str, max_length: int = 10000) -> Tuple[str, bool]:
+    def sanitize_content(cls, content: str, max_length: int = 10000) -> tuple[str, bool]:
         """
         Sanitize content for capture_memory.
 

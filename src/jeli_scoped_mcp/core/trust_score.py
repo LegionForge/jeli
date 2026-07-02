@@ -1,7 +1,6 @@
 """Trust scoring model: assign trust to memories based on source and verification."""
 
 from enum import Enum
-from typing import Optional
 
 
 class TrustSource(Enum):
@@ -36,7 +35,7 @@ class TrustScorer:
         return max(cls.MIN_TRUST, min(cls.MAX_TRUST, score))
 
     @classmethod
-    def validate(cls, score: float) -> tuple[bool, Optional[str]]:
+    def validate(cls, score: float) -> tuple[bool, str | None]:
         """
         Validate a trust score.
 

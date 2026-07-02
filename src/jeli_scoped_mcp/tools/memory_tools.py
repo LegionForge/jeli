@@ -57,7 +57,7 @@ class MemoryTools:
     def __init__(
         self,
         db: AsyncPostgresPool,
-        embedder: EmbeddingProvider,
+        embedder: EmbeddingProvider | None,
         chain_key: str,
     ):
         self.db = db
@@ -85,6 +85,8 @@ class MemoryTools:
             raise MemoryToolError(f"memory_type must be one of {sorted(VALID_MEMORY_TYPES)}")
         if not actor:
             raise MemoryToolError("actor is required for provenance")
+        if self.embedder is None:
+            raise MemoryToolError("no embedding provider configured (read-only mode)")
 
         valid, err = TrustScorer.validate(trust_score)
         if not valid:
@@ -151,6 +153,8 @@ class MemoryTools:
             session_id,
             source_agent,
         )
+        if row is None:
+            raise MemoryToolError("insert failed: no row returned")
 
         await self.db.execute(
             """

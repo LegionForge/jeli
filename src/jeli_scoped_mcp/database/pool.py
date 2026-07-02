@@ -1,7 +1,8 @@
 """Async PostgreSQL connection pooling via asyncpg."""
 
+from typing import Any
+
 import asyncpg
-from typing import Any, Optional
 
 
 class AsyncPostgresPool:
@@ -12,7 +13,7 @@ class AsyncPostgresPool:
         self.db_url = db_url
         self.min_size = min_size
         self.max_size = max_size
-        self.pool: Optional[asyncpg.Pool] = None
+        self.pool: asyncpg.Pool | None = None
 
     async def connect(self):
         """Create the connection pool."""
@@ -35,7 +36,7 @@ class AsyncPostgresPool:
         async with self.pool.acquire() as conn:
             return await conn.execute(query, *args)
 
-    async def fetchrow(self, query: str, *args) -> Optional[asyncpg.Record]:
+    async def fetchrow(self, query: str, *args) -> asyncpg.Record | None:
         """Fetch a single row."""
         if not self.pool:
             raise RuntimeError("Connection pool not initialized")
@@ -47,7 +48,8 @@ class AsyncPostgresPool:
         if not self.pool:
             raise RuntimeError("Connection pool not initialized")
         async with self.pool.acquire() as conn:
-            return await conn.fetch(query, *args)
+            rows: list[asyncpg.Record] = await conn.fetch(query, *args)
+            return rows
 
     async def fetchval(self, query: str, *args) -> Any:
         """Fetch a single value."""
