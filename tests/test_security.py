@@ -246,11 +246,12 @@ class TestEmbeddingDimensionValidation:
     """Test embedding dimension validation."""
 
     def test_openai_dimensions_valid(self):
-        """OpenAI model expects 1536 dimensions."""
+        """OpenAI is truncated to the 1024-dim index standard (matryoshka)."""
         model_id = "openai/text-embedding-3-small"
         # Valid dimension
-        assert InjectionDefense.validate_embedding_dimensions(1536, model_id) is True
-        # Invalid dimension
+        assert InjectionDefense.validate_embedding_dimensions(1024, model_id) is True
+        # Invalid dimensions (1536 is OpenAI-native but off-standard)
+        assert InjectionDefense.validate_embedding_dimensions(1536, model_id) is False
         assert InjectionDefense.validate_embedding_dimensions(768, model_id) is False
 
     def test_ollama_dimensions_valid(self):

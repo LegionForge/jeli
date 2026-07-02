@@ -53,14 +53,19 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "search_memory",
         "description": (
-            "Read-only search over currently-valid memories, ranked by trust "
-            "then recency. Phase 1: fts (substring) mode."
+            "Read-only search over currently-valid memories. semantic = "
+            "vector similarity (returns distance); fts = substring, ranked "
+            "by trust then recency."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "query": {"type": "string"},
-                "mode": {"type": "string", "enum": ["fts"], "default": "fts"},
+                "mode": {
+                    "type": "string",
+                    "enum": ["fts", "semantic"],
+                    "default": "semantic",
+                },
                 "limit": {"type": "integer", "default": 10},
             },
             "required": ["query"],

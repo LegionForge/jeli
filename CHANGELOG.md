@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Semantic search: pgvector `vector(1024)` + HNSW cosine index (alembic
+  004); `search_memory` mode `semantic` returns per-hit `distance`
+- Ollama embedding provider implemented (`/api/embed`) and made the
+  default — local-first; default model `snowflake-arctic-embed2`
+- OpenAI provider truncates to the 1024 index standard via the
+  `dimensions` parameter (matryoshka)
+- Write-path dimension guard: non-1024 embeddings are refused so the
+  index can never silently mix dimensions
+
+### Changed
+- Default embedding provider `openai` → `ollama` (sovereignty default)
+
 ## v0.1.0-alpha — 2026-07-02
 
 First working release: a cryptographically auditable memory store with a
