@@ -1,0 +1,20 @@
+# gitleaks configuration for Jeli
+#
+# Extends the default ruleset and allowlists dummy secrets used as
+# unit-test fixtures. These are not real credentials — they exercise the
+# hash-chain and API-key validation code paths.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Unit-test fixtures: dummy chain/API keys, not real credentials"
+regexes = [
+  '''secret_key_12345''',
+  '''my_secret_key_12345''',
+  '''test-chain-key''',
+  '''wrong-key''',
+]
+paths = [
+  '''tests/.*\.py''',
+]
