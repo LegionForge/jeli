@@ -128,10 +128,12 @@ class InjectionDefense:
             return False
 
         expected_dims = {
-            "openai/text-embedding-3-small": 1536,
+            # openai is truncated to the 1024 index standard (matryoshka)
+            "openai/text-embedding-3-small": 1024,
             "ollama/nomic-embed-text": 768,
-            "ollama/qwen3": 768,
-            "ollama/qwen3-embedding": 768,
+            "ollama/snowflake-arctic-embed2": 1024,
+            "ollama/qwen3-embedding": 1024,
+            "ollama/bge-m3": 1024,
         }
 
         expected = expected_dims.get(model_id)

@@ -131,10 +131,9 @@ No shell, no arbitrary file access, all calls logged with source (agent ID, sess
 - ✅ Partnership proposal submitted to OB1 (awaiting feedback)
 - 🚧 Ready to begin Phase 1 implementation
 
-**Current (Phase 1, shipped on this branch):** Scoped MCP server (stdio) with `capture_memory` / `search_memory` / `audit_trail` / `verify_chain`, hash-chained writes with per-record signing-key identity, injection defense with trust capping, and the `jeli verify` CLI.
+**Current:** Scoped MCP server (stdio) with `capture_memory` / `search_memory` (semantic via pgvector HNSW + fts) / `audit_trail` / `verify_chain`, hash-chained writes with per-record signing-key identity, injection defense with trust capping, and the `jeli verify` CLI. Index standard: `vector(1024)` — arctic-embed2 native, Qwen3-Embedding MRL ceiling, OpenAI truncatable; model swaps are re-embedding jobs, never schema migrations.
 
 **Next:**
-- pgvector migration + semantic search mode
 - Contradiction detection on the write path (Phase 3)
 - Integrate with OB1 (if partnership approved) OR deploy standalone
 - Implement Judicial conflict resolution engine
@@ -162,7 +161,9 @@ jeli verify                          # walk the chain, report first tampered rec
 | `SCOPED_MCP_CHAIN_KEY` | *(required)* | HMAC signing key for the hash chain |
 | `SCOPED_MCP_CHAIN_KEY_ID` | `k1` | identity of the active chain key (rotation: new key ⇒ new id; old records verify under their own key) |
 | `SCOPED_MCP_AGENT_ACTOR` | `unknown-agent` | principal stamped on every write/audit row — set per agent instance; not settable by the agent itself |
-| `SCOPED_MCP_EMBEDDING_PROVIDER` | `openai` | `openai` or `ollama` |
+| `SCOPED_MCP_EMBEDDING_PROVIDER` | `ollama` | local-first; `openai` is the opt-in (truncated to 1024 dims) |
+| `OLLAMA_MODEL` | `snowflake-arctic-embed2` | must emit 1024 dims (the index standard); `qwen3-embedding` also supported |
+| `SCOPED_MCP_EMBEDDING_DIMENSIONS` | auto | only needed for Ollama models not in the built-in dims map |
 | `SCOPED_MCP_TRANSPORT` | `stdio` | MCP transport |
 
 ## Contributing / Repo hygiene

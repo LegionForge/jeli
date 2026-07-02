@@ -24,10 +24,12 @@ class Settings(BaseSettings):
     agent_actor: str = os.getenv("SCOPED_MCP_AGENT_ACTOR", "unknown-agent")
 
     # Embedding
-    embedding_provider: Literal["openai", "ollama"] = os.getenv("SCOPED_MCP_EMBEDDING_PROVIDER", "openai")  # type: ignore
+    # Local-first: sovereignty is the default, cloud is the opt-in.
+    embedding_provider: Literal["openai", "ollama"] = os.getenv("SCOPED_MCP_EMBEDDING_PROVIDER", "ollama")  # type: ignore
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-    ollama_model: str = os.getenv("OLLAMA_MODEL", "nomic-embed-text")
+    ollama_model: str = os.getenv("OLLAMA_MODEL", "snowflake-arctic-embed2")
+    embedding_dimensions: int = int(os.getenv("SCOPED_MCP_EMBEDDING_DIMENSIONS", "0"))
 
     # Server
     transport: Literal["stdio", "http"] = os.getenv("SCOPED_MCP_TRANSPORT", "stdio")  # type: ignore

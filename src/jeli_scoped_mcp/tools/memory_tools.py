@@ -40,7 +40,12 @@ VALID_MEMORY_TYPES = {
     "transient",
 }
 
-SEARCH_MODES = {"fts"}  # "semantic" arrives with the pgvector migration
+SEARCH_MODES = {"fts", "semantic"}
+
+# The semantic index standard (see alembic 004): arctic-embed2 native,
+# Qwen3 MRL ceiling, OpenAI truncatable. Writes with any other dimension
+# are refused — mixed dimensions would silently corrupt ranking.
+INDEX_DIMENSIONS = 1024
 
 # Advisory lock key for chain writes (arbitrary constant, one per chain).
 CHAIN_WRITE_LOCK = 0x4A454C49  # "JELI"
@@ -118,6 +123,13 @@ class MemoryTools:
                 f"embedding dimensions {embedding.dimensions} do not match "
                 f"model {embedding.model_id}"
             )
+        if embedding.dimensions != INDEX_DIMENSIONS:
+            raise MemoryToolError(
+                f"index standard is vector({INDEX_DIMENSIONS}); provider "
+                f"{embedding.model_id} emits {embedding.dimensions} — switch "
+                "to a 1024-dim model (snowflake-arctic-embed2, "
+                "qwen3-embedding) or re-embed"
+            )
 
         # prev-hash read + insert are serialized under an advisory lock:
         # without it, two concurrent writers reuse the same prev_hash and
@@ -145,7 +157,7 @@ class MemoryTools:
                     memory_type, prev_hash, record_hash, created_by,
                     session_id, source_agent, key_id
                 ) VALUES (
-                    $1, $2, $3::jsonb, $4,
+                    $1, $2, $3::vector, $4,
                     $5, $6, $7::jsonb, $8,
                     $9, $10, $11, $12,
                     $13, $14, $15
@@ -224,19 +236,45 @@ class MemoryTools:
             )
         limit = max(1, min(int(limit), 50))
 
-        rows = await self.db.fetchall(
-            """
-            SELECT id, content, trust_score, memory_type, created_at,
-                   created_by, source_agent, metadata
-            FROM memory_entry
-            WHERE valid_until IS NULL
-              AND content ILIKE '%' || $1 || '%'
-            ORDER BY trust_score DESC, created_at DESC
-            LIMIT $2
-            """,
-            query,
-            limit,
-        )
+        if mode == "semantic":
+            if self.embedder is None:
+                raise MemoryToolError(
+                    "semantic search needs an embedding provider (read-only "
+                    "mode has none) — use mode=fts"
+                )
+            q_embedding = await self.embedder.embed(query)
+            if q_embedding.dimensions != INDEX_DIMENSIONS:
+                raise MemoryToolError(
+                    f"query embedding is {q_embedding.dimensions}-dim; the "
+                    f"index standard is {INDEX_DIMENSIONS}"
+                )
+            rows = await self.db.fetchall(
+                """
+                SELECT id, content, trust_score, memory_type, created_at,
+                       created_by, source_agent, metadata,
+                       (embedding <=> $1::vector) AS distance
+                FROM memory_entry
+                WHERE valid_until IS NULL
+                ORDER BY embedding <=> $1::vector
+                LIMIT $2
+                """,
+                json.dumps(q_embedding.vector),
+                limit,
+            )
+        else:
+            rows = await self.db.fetchall(
+                """
+                SELECT id, content, trust_score, memory_type, created_at,
+                       created_by, source_agent, metadata
+                FROM memory_entry
+                WHERE valid_until IS NULL
+                  AND content ILIKE '%' || $1 || '%'
+                ORDER BY trust_score DESC, created_at DESC
+                LIMIT $2
+                """,
+                query,
+                limit,
+            )
 
         results = []
         for r in rows:
@@ -254,6 +292,7 @@ class MemoryTools:
                     # read-time quarantine signal: consumers should treat
                     # flagged content as untrusted input, not instructions
                     "injection_flagged": bool((r_meta or {}).get("injection_flagged")),
+                    **({"distance": float(r["distance"])} if "distance" in r.keys() else {}),
                 }
             )
             await self.db.execute(

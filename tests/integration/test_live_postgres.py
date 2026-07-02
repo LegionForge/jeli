@@ -24,16 +24,22 @@ pytestmark = pytest.mark.skipif(
 
 class StubEmbedder:
     def model_id(self):
-        return "ollama/nomic-embed-text"
+        return "ollama/snowflake-arctic-embed2"
 
     def dimensions(self):
-        return 768
+        return 1024
 
     async def embed(self, text: str) -> EmbeddingResult:
+        # deterministic pseudo-embedding: same text -> same vector, distinct
+        # texts -> distinct directions, so cosine ranking is exercised
+        import hashlib
+
+        seed = hashlib.sha256(text.lower().encode()).digest()
+        vec = [(seed[i % 32] - 128) / 128.0 for i in range(1024)]
         return EmbeddingResult(
-            vector=[0.01] * 768,
-            model_id="ollama/nomic-embed-text",
-            dimensions=768,
+            vector=vec,
+            model_id="ollama/snowflake-arctic-embed2",
+            dimensions=1024,
             embedded_at=datetime.now(UTC),
         )
 
@@ -115,3 +121,23 @@ async def test_injection_capped_live(live_tools):
     assert r["injection_flagged"] is True and r["trust_score"] == 0.3
     hits = await tools.search_memory(query="admin", actor="itest")
     assert hits[0]["injection_flagged"] is True
+
+
+async def test_semantic_search_live(live_tools):
+    tools, db = live_tools
+    await tools.capture_memory(
+        content="the sky is blue today",
+        memory_type="episodic",
+        trust_score=0.6,
+        actor="itest",
+    )
+    await tools.capture_memory(
+        content="postgres tuning notes",
+        memory_type="semantic",
+        trust_score=0.6,
+        actor="itest",
+    )
+    # identical text -> identical stub vector -> distance ~0 for the match
+    hits = await tools.search_memory(query="the sky is blue today", actor="itest", mode="semantic")
+    assert hits[0]["content"] == "the sky is blue today"
+    assert hits[0]["distance"] < 0.01 < hits[1]["distance"]

@@ -24,16 +24,16 @@ CHAIN_KEY = "test-chain-key"
 
 class FakeEmbedder:
     def model_id(self):
-        return "ollama/nomic-embed-text"
+        return "ollama/snowflake-arctic-embed2"
 
     def dimensions(self):
-        return 768
+        return 1024
 
     async def embed(self, text: str) -> EmbeddingResult:
         return EmbeddingResult(
-            vector=[0.1] * 768,
-            model_id="ollama/nomic-embed-text",
-            dimensions=768,
+            vector=[0.1] * 1024,
+            model_id="ollama/snowflake-arctic-embed2",
+            dimensions=1024,
             embedded_at=datetime.now(UTC),
         )
 
@@ -110,6 +110,12 @@ class FakePool:
     async def fetchall(self, query, *args):
         if "FROM memory_audit_log" in query:
             return [a for a in self.audit if str(a["memory_id"]) == str(args[0])]
+        if "<=>" in query:
+            _qvec, limit = args
+            hits = [m for m in self.memories if m["valid_until"] is None]
+            for h in hits:
+                h = dict(h)
+            return [dict(m, distance=0.0) for m in hits[:limit]]
         if "ILIKE" in query:
             needle, limit = args
             hits = [
@@ -241,7 +247,31 @@ async def test_search_logs_audit_per_hit(tools, pool):
 
 async def test_search_rejects_unknown_mode(tools):
     with pytest.raises(MemoryToolError):
-        await tools.search_memory(query="x", actor="a", mode="semantic")
+        await tools.search_memory(query="x", actor="a", mode="sql")
+
+
+async def test_semantic_search_returns_distance(tools):
+    await capture(tools, content="vector searchable fact")
+    hits = await tools.search_memory(query="anything", actor="a", mode="semantic")
+    assert hits and "distance" in hits[0]
+
+
+async def test_capture_rejects_non_index_dimensions(pool):
+    class Small768Embedder(FakeEmbedder):
+        def dimensions(self):
+            return 768
+
+        async def embed(self, text):
+            return EmbeddingResult(
+                vector=[0.1] * 768,
+                model_id="ollama/nomic-embed-text",
+                dimensions=768,
+                embedded_at=datetime.now(UTC),
+            )
+
+    t = MemoryTools(db=pool, embedder=Small768Embedder(), chain_key=CHAIN_KEY)
+    with pytest.raises(MemoryToolError, match="index standard"):
+        await capture(t)
 
 
 # ── audit_trail ──────────────────────────────────────────────────────────────
