@@ -1,37 +1,44 @@
 # Jeli
 
-> A seamless, sovereign, cryptographically-attested personal memory system that captures everything, forgets nothing useful, surfaces insights automatically, and plugs into any agent — requiring zero extra effort from the user.
+> A security and governance layer for personal memory systems. Cryptographically verifiable. Poison-proof. Sovereign.
 
 ## The Problem
 
-Major platforms (Apple, Microsoft, Google, OpenAI, Anthropic) are converging on the same play: **capture your behavior, preferences, and context inside their walled garden**, build a model of you, and use it to serve you better — on their terms.
+As of 2026, memory poisoning attacks are documented and active:
+- **MINJA attack (arXiv 2025):** 95%+ injection success, 70%+ attack success
+- **Microsoft Security (Feb 2026):** "AI Recommendation Poisoning" in dozens of companies
+- **Palo Alto Unit 42:** Indirect prompt injection through documents poisoning long-term memory
 
-Once your memory lives in Apple Intelligence or Copilot, you cannot leave without losing years of accumulated context. The vendor controls the format, API, deletion policy, and can change all of these unilaterally.
+Plus the vendor lock-in problem: Once your memory lives in Apple Intelligence or Copilot, you cannot leave without losing years of accumulated context.
 
 ## The Solution
 
-Jeli is a personal memory framework where:
+Jeli adds cryptographic integrity and governance to memory systems:
 
-- **You own the data** — full schema access, full export, no proprietary format lock-in
-- **Architecture makes exfiltration detectable** — cryptographic provenance traces every memory to its origin
-- **No single vendor required** — any component (storage, inference, agents) can be swapped
-- **Independence is structural** — sovereignty enforced by the system, not promised by terms of service
-- **Open standard** — others can adopt it; not forced into vendor memory systems
+- **Hash-chained memories** — detect silent corruption or tampering
+- **Contradiction detection** — flag poisoned or conflicting facts
+- **Full provenance** — every memory traces to its origin with audit trail
+- **Trust scoring** — distinguish user-stated (1.0) from agent-inferred (0.6) from external (0.3)
+- **Temporal boundaries** — facts age and invalidate; old records never delete
+- **Amendment tracking** — full history of how facts changed
+- **User veto** — you control irreversible agent actions
+- **Structural sovereignty** — security enforced by architecture, not promises
 
 ## Architecture
 
 Jeli is built on **three-branch governance** (separation of powers):
 
 ```
-Executive (Agents) ←→ Legislative (Memory Store) ←→ Judicial (Conflict Resolution)
-                              ↓
-                    Constitutional Layer (User-Signed, Inviolable)
+Executive (Agents) ←→ Scoped MCP ←→ Legislative (Memory Store) ←→ Judicial (Conflict Resolution)
+                      (Jeli Layer)                           ↓
+                                          Constitutional Layer (User-Signed, Inviolable)
 ```
 
-- **Executive:** Hermes, Claude, future agents — propose memories, cannot write directly
-- **Legislative:** PostgreSQL + pgvector (OB1/lf2b) — canonical source of truth with append-only audit log
+- **Executive:** Hermes, Claude, future agents — propose memories via MCP only
+- **Scoped MCP (Jeli's Access Control):** Enforces security policy, validates integrity, detects injection
+- **Legislative:** PostgreSQL + pgvector (optional: OB1) — canonical source with append-only hash chain
 - **Judicial:** Conflict resolution engine — arbitrates contradictions using trust scores, precedent, provenance
-- **Constitutional:** User-signed, cryptographically inviolable rules — data stays local, no PII leaves machine, user veto on irreversible actions
+- **Constitutional:** User-signed, cryptographically inviolable layer — data stays local, no PII leaves machine, user veto on irreversible actions
 
 ## 4-Layer System Stack
 
@@ -64,6 +71,26 @@ As of 2026, memory poisoning attacks on AI agents are actively documented:
 **Jeli's defense:** Cryptographic integrity layer makes injected memories detectable — they either break the hash chain or carry low/foreign trust score that the judicial layer flags and surfaces.
 
 Verification command: `jeli verify` — walks the provenance log, recomputes all hashes, flags breaks.
+
+## OB1 Integration
+
+Jeli is designed to work **alongside** [OB1](https://github.com/NateBJones-Projects/OB1) (by Nate B. Jones), a personal memory system that excels at multi-source ingestion and semantic search.
+
+**Proposed Partnership:**
+- **OB1** handles ingestion, retrieval, multi-AI access (what it does best)
+- **Jeli** adds security, governance, cryptographic guarantees (what it does best)
+- **Together:** Trustworthy, sovereign memory that multiple AIs can safely use
+
+**Installation Model:** Jeli is optional and installable:
+- Install: `jeli init --with-ob1` (adds security tables, Scoped MCP)
+- Use: OB1 works as-is; Jeli layer is opt-in
+- Remove: `jeli uninstall --keep-ob1` (drops Jeli tables, OB1 unaffected)
+
+Users who don't need security use OB1 standalone. Users who do get cryptographic guarantees.
+
+**Current Status:** Exploring partnership with Nate. See [Extension Proposal](https://github.com/NateBJones-Projects/OB1/issues) for feedback. Can also be deployed standalone.
+
+---
 
 ## First Build: Scoped MCP Server
 
@@ -99,15 +126,21 @@ No shell, no arbitrary file access, all calls logged with source (agent ID, sess
 
 ## Status
 
-**Current:** Designing the Scoped MCP server (access policy model, caller identity, permission schema, interface contract).
+**Current:** 
+- ✅ Full implementation plan complete (Scoped MCP Server)
+- ✅ Partnership proposal submitted to OB1 (awaiting feedback)
+- 🚧 Ready to begin Phase 1 implementation
 
-**Next:** Prototype hash-chain append log on OB1, implement Judicial conflict resolution engine, build consolidation/dreaming loop.
+**Next:** 
+- Build Scoped MCP Server (hash-chain, contradiction detection, injection defense)
+- Integrate with OB1 (if partnership approved) OR deploy standalone
+- Implement Judicial conflict resolution engine
+- Build consolidation/dreaming loop
 
 ## Documentation
 
-- **Full Vision & Technical Decisions:** See `Library/AI/projects/legionforge-memory-framework-vision.md` (in Obsidian vault)
 - **Architecture & Development:** See `CLAUDE.md` in this repository
-- **Security Posture & Data Integrity:** See `Library/AI/memory/lessons/lessons-security.md` and `lessons-data.md` (in Obsidian vault)
+- **Extended Documentation:** Project vision, security posture, and data integrity guidelines live in your vault
 
 ## License
 
