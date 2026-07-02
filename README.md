@@ -131,11 +131,47 @@ No shell, no arbitrary file access, all calls logged with source (agent ID, sess
 - ✅ Partnership proposal submitted to OB1 (awaiting feedback)
 - 🚧 Ready to begin Phase 1 implementation
 
-**Next:** 
-- Build Scoped MCP Server (hash-chain, contradiction detection, injection defense)
+**Current (Phase 1, shipped on this branch):** Scoped MCP server (stdio) with `capture_memory` / `search_memory` / `audit_trail` / `verify_chain`, hash-chained writes with per-record signing-key identity, injection defense with trust capping, and the `jeli verify` CLI.
+
+**Next:**
+- pgvector migration + semantic search mode
+- Contradiction detection on the write path (Phase 3)
 - Integrate with OB1 (if partnership approved) OR deploy standalone
 - Implement Judicial conflict resolution engine
 - Build consolidation/dreaming loop
+
+## Quick Start
+
+```bash
+pip install -e ".[dev]"
+pytest                       # 127 tests, no services required
+alembic upgrade head         # requires PostgreSQL
+
+export SCOPED_MCP_API_KEY=...        # generate: python -c 'import secrets; print(secrets.token_urlsafe(32))'
+export SCOPED_MCP_CHAIN_KEY=...      # HMAC key for the hash chain — guard like a root credential
+python -m jeli_scoped_mcp            # stdio MCP server
+jeli verify                          # walk the chain, report first tampered record
+```
+
+## Configuration
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `SCOPED_MCP_DB_URL` | `postgresql://...:5433/openbrain` | PostgreSQL connection |
+| `SCOPED_MCP_API_KEY` | *(required)* | server auth key |
+| `SCOPED_MCP_CHAIN_KEY` | *(required)* | HMAC signing key for the hash chain |
+| `SCOPED_MCP_CHAIN_KEY_ID` | `k1` | identity of the active chain key (rotation: new key ⇒ new id; old records verify under their own key) |
+| `SCOPED_MCP_AGENT_ACTOR` | `unknown-agent` | principal stamped on every write/audit row — set per agent instance; not settable by the agent itself |
+| `SCOPED_MCP_EMBEDDING_PROVIDER` | `openai` | `openai` or `ollama` |
+| `SCOPED_MCP_TRANSPORT` | `stdio` | MCP transport |
+
+## Contributing / Repo hygiene
+
+This repo ships a pre-push scrub hook that scans every commit being pushed for internal identifiers. Enable it once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
 
 ## Documentation
 
