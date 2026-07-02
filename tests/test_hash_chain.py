@@ -1,6 +1,7 @@
 """Unit tests for hash-chain integrity and amendment tracking."""
 
 import pytest
+
 from jeli_scoped_mcp.core import (
     AmendmentTracker,
     HashChainValidator,
@@ -83,6 +84,7 @@ class TestBuildCanonicalRecord:
             embedding_dimensions=1536,
             trust_score=0.95,
             memory_type="preference",
+            key_id="k1",
         )
         assert "test memory" in result
         assert "openai/text-embedding-3-small" in result
@@ -97,6 +99,7 @@ class TestBuildCanonicalRecord:
             embedding_dimensions=1536,
             trust_score=0.9,
             memory_type="semantic",
+            key_id="k1",
         )
         record2 = build_canonical_record(
             content="fact",
@@ -104,6 +107,7 @@ class TestBuildCanonicalRecord:
             embedding_dimensions=1536,
             trust_score=0.9,
             memory_type="semantic",
+            key_id="k1",
         )
         assert record1 == record2
 
@@ -115,6 +119,7 @@ class TestBuildCanonicalRecord:
             embedding_dimensions=768,
             trust_score=0.6,
             memory_type="episodic",
+            key_id="k1",
             metadata={"session_id": "abc123"},
         )
         assert "session_id" in result
@@ -203,6 +208,7 @@ class TestAmendmentTracker:
             embedding_dimensions=768,
             trust_score=0.6,
             memory_type="semantic",
+            key_id="k1",
         )
         new_canonical = build_canonical_record(
             content="corrected fact",
@@ -210,6 +216,7 @@ class TestAmendmentTracker:
             embedding_dimensions=768,
             trust_score=0.95,  # User-confirmed
             memory_type="semantic",
+            key_id="k1",
         )
 
         is_amend, reason = AmendmentTracker.is_amendment(
@@ -229,6 +236,7 @@ class TestAmendmentTracker:
             embedding_dimensions=768,
             trust_score=0.4,
             memory_type="semantic",
+            key_id="k1",
         )
         new_canonical = build_canonical_record(
             content="fact2",
@@ -236,6 +244,7 @@ class TestAmendmentTracker:
             embedding_dimensions=768,
             trust_score=0.5,  # Still low
             memory_type="semantic",
+            key_id="k1",
         )
 
         is_amend, reason = AmendmentTracker.is_amendment(
@@ -254,13 +263,15 @@ class TestAmendmentTracker:
             embedding_dimensions=768,
             trust_score=1.0,
             memory_type="preference",
+            key_id="k1",
         )
         new_canonical = build_canonical_record(
             content="episodic fact",
             embedding_model="model",
             embedding_dimensions=768,
             trust_score=0.95,
-            memory_type="episodic",  # Different type
+            memory_type="episodic",
+            key_id="k1",  # Different type
         )
 
         is_amend, reason = AmendmentTracker.is_amendment(

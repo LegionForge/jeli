@@ -54,13 +54,20 @@ def build_canonical_record(
     embedding_dimensions: int,
     trust_score: float,
     memory_type: str,
+    key_id: str,
     metadata: dict | None = None,
 ) -> str:
     """
-    Build canonical JSON representation for hashing.
+    Build canonical JSON representation for hashing (canonical format v1).
 
     Includes all load-bearing fields that define the memory. Order must be
     consistent so that identical records produce identical hashes.
+
+    Two representation rules exist for cross-driver hash stability:
+    - trust_score is canonicalized to INTEGER HUNDREDTHS (0.6 -> 60) so
+      float/Decimal round-trips through the DB can never change the hash
+    - key_id is INSIDE the hash so a record cannot be re-pointed at a
+      different (weaker/compromised) signing key without breaking its hash
 
     Args:
         content: Memory text
@@ -68,6 +75,7 @@ def build_canonical_record(
         embedding_dimensions: Embedding vector dimensions (1536 for OpenAI)
         trust_score: Numeric trust level (0.3-1.0)
         memory_type: Classification (preference, identity, episodic, etc.)
+        key_id: Identifier of the chain key that signs this record
         metadata: Optional dict for additional attributes
 
     Returns:
@@ -77,8 +85,9 @@ def build_canonical_record(
         "content": content,
         "embedding_model": embedding_model,
         "embedding_dimensions": embedding_dimensions,
-        "trust_score": trust_score,
+        "trust_hundredths": round(trust_score * 100),
         "memory_type": memory_type,
+        "key_id": key_id,
     }
     if metadata:
         record["metadata"] = metadata
@@ -216,5 +225,7 @@ class AmendmentTracker:
         if len(old_embedding) != len(new_embedding):
             raise ValueError("Embedding dimensions must match")
 
-        sum_sq = sum((new - old) ** 2 for old, new in zip(old_embedding, new_embedding, strict=True))
+        sum_sq = sum(
+            (new - old) ** 2 for old, new in zip(old_embedding, new_embedding, strict=True)
+        )
         return float(sum_sq**0.5)

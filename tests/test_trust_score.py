@@ -1,6 +1,5 @@
 """Unit tests for trust scoring model."""
 
-import pytest
 from jeli_scoped_mcp.core import (
     TrustAdjustment,
     TrustScorer,
@@ -106,7 +105,9 @@ class TestTrustScorer:
     def test_confidence_interval_improves_with_confirmations(self):
         """Confidence interval tightens with confirmations."""
         initial_lower, initial_upper = TrustScorer.compute_confidence_interval(0.6, update_count=0)
-        improved_lower, improved_upper = TrustScorer.compute_confidence_interval(0.6, update_count=5)
+        improved_lower, improved_upper = TrustScorer.compute_confidence_interval(
+            0.6, update_count=5
+        )
 
         # Interval should be smaller after confirmations
         assert improved_upper - improved_lower < initial_upper - initial_lower

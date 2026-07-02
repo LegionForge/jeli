@@ -1,6 +1,5 @@
 """Unit tests for contradiction detection."""
 
-import pytest
 from jeli_scoped_mcp.core import (
     ContradictionClassifier,
     ContradictionDetector,

@@ -67,6 +67,7 @@ class FakePool:
                 actor,
                 session_id,
                 source_agent,
+                key_id,
             ) = args
             row = {
                 "id": uuid.uuid4(),
@@ -84,6 +85,7 @@ class FakePool:
                 "created_by": actor,
                 "session_id": session_id,
                 "source_agent": source_agent,
+                "key_id": key_id,
                 "created_at": datetime.now(UTC),
                 "valid_until": None,
                 "superseded_by": None,
@@ -309,10 +311,53 @@ async def test_verify_chain_detects_recomputed_hash_without_key(tools, pool):
         embedding_dimensions=row["embedding_dimensions"],
         trust_score=float(row["trust_score"]),
         memory_type=row["memory_type"],
+        key_id=row["key_id"],
         metadata=None,
     )
     from jeli_scoped_mcp.core.hash_chain import compute_record_hash
 
     row["record_hash"] = compute_record_hash("wrong-key", canonical, None)
+    result = await tools.verify_chain()
+    assert result["chain_valid"] is False
+
+
+# ── key rotation ─────────────────────────────────────────────────────────────
+
+
+async def test_verify_chain_across_key_rotation(pool):
+    """Records signed under k1 still verify after rotation to k2."""
+    old = MemoryTools(db=pool, embedder=FakeEmbedder(), chain_key="key-one", key_id="k1")
+    await capture(old, content="signed under k1")
+
+    rotated = MemoryTools(
+        db=pool,
+        embedder=FakeEmbedder(),
+        chain_key="key-two",
+        key_id="k2",
+        key_registry={"k1": "key-one"},
+    )
+    await capture(rotated, content="signed under k2")
+
+    result = await rotated.verify_chain()
+    assert result["chain_valid"] is True
+    assert result["records_checked"] == 2
+
+
+async def test_verify_fails_closed_on_unknown_key_id(pool):
+    """A record whose key_id is not in the registry is treated as forged."""
+    writer = MemoryTools(db=pool, embedder=FakeEmbedder(), chain_key="mystery-key", key_id="k9")
+    receipt = await capture(writer, content="orphaned key")
+
+    reader = MemoryTools(db=pool, embedder=FakeEmbedder(), chain_key=CHAIN_KEY, key_id="k1")
+    result = await reader.verify_chain()
+    assert result["chain_valid"] is False
+    assert result["first_bad_record"] == receipt["id"]
+
+
+async def test_key_id_is_tamper_evident(tools, pool):
+    """Re-pointing a record at a different key_id breaks its hash."""
+    await capture(tools)
+    pool.memories[0]["key_id"] = "k2"
+    tools.key_registry["k2"] = "some-other-key"
     result = await tools.verify_chain()
     assert result["chain_valid"] is False

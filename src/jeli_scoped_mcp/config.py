@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # Security
     api_key: str = os.getenv("SCOPED_MCP_API_KEY", "")
     chain_key: str = os.getenv("SCOPED_MCP_CHAIN_KEY", "")
+    chain_key_id: str = os.getenv("SCOPED_MCP_CHAIN_KEY_ID", "k1")
 
     # Identity stamped on every write/audit row; server-side so agents
     # cannot impersonate another writer.

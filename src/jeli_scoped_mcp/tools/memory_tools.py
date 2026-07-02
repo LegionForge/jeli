@@ -59,11 +59,17 @@ class MemoryTools:
         db: AsyncPostgresPool,
         embedder: EmbeddingProvider | None,
         chain_key: str,
+        key_id: str = "k1",
+        key_registry: dict[str, str] | None = None,
     ):
         self.db = db
         self.embedder = embedder
         self.chain_key = chain_key
-        self.validator = HashChainValidator(chain_key)
+        self.key_id = key_id
+        # key_id -> key material; verification looks up each record's own
+        # signing key so rotation is per-record, never all-or-nothing.
+        self.key_registry = dict(key_registry or {})
+        self.key_registry.setdefault(key_id, chain_key)
 
     # ── capture_memory ───────────────────────────────────────────────────────
 
@@ -119,6 +125,7 @@ class MemoryTools:
             embedding_dimensions=embedding.dimensions,
             trust_score=trust,
             memory_type=memory_type,
+            key_id=self.key_id,
             metadata=meta or None,
         )
         record_hash = compute_record_hash(self.chain_key, canonical, prev_hash)
@@ -129,12 +136,12 @@ class MemoryTools:
                 content, content_hash, embedding, embedding_model,
                 embedding_dimensions, embedded_at, metadata, trust_score,
                 memory_type, prev_hash, record_hash, created_by,
-                session_id, source_agent
+                session_id, source_agent, key_id
             ) VALUES (
                 $1, $2, $3::jsonb, $4,
                 $5, $6, $7::jsonb, $8,
                 $9, $10, $11, $12,
-                $13, $14
+                $13, $14, $15
             )
             RETURNING id, created_at
             """,
@@ -152,6 +159,7 @@ class MemoryTools:
             actor,
             session_id,
             source_agent,
+            self.key_id,
         )
         if row is None:
             raise MemoryToolError("insert failed: no row returned")
@@ -255,7 +263,7 @@ class MemoryTools:
             """
             SELECT id, content, embedding_model, embedding_dimensions,
                    metadata, trust_score, memory_type, prev_hash, record_hash,
-                   created_at, created_by, source_agent, valid_until,
+                   key_id, created_at, created_by, source_agent, valid_until,
                    superseded_by, amended_from
             FROM memory_entry WHERE id = $1
             """,
@@ -304,7 +312,8 @@ class MemoryTools:
         Returns validity plus the first tampered record id, if any."""
         rows = await self.db.fetchall("""
             SELECT id, content, embedding_model, embedding_dimensions,
-                   metadata, trust_score, memory_type, prev_hash, record_hash
+                   metadata, trust_score, memory_type, prev_hash, record_hash,
+                   key_id
             FROM memory_entry ORDER BY created_at ASC, id ASC
             """)
         prev_hash: str | None = None
@@ -336,6 +345,11 @@ class MemoryTools:
         i.e. genuinely first in chain); otherwise trust the row's stored
         prev_hash for a single-record check.
         """
+        record_key = self.key_registry.get(row["key_id"])
+        if record_key is None:
+            # Unknown signing key: fail closed — an unverifiable record is
+            # indistinguishable from a forged one.
+            return False
         meta = row["metadata"]
         if isinstance(meta, str):
             meta = json.loads(meta)
@@ -345,7 +359,10 @@ class MemoryTools:
             embedding_dimensions=row["embedding_dimensions"],
             trust_score=float(row["trust_score"]),
             memory_type=row["memory_type"],
+            key_id=row["key_id"],
             metadata=meta or None,
         )
         effective_prev = prev_hash if chain_walk else row["prev_hash"]
-        return self.validator.validate_record(canonical, row["record_hash"], effective_prev)
+        return HashChainValidator(record_key).validate_record(
+            canonical, row["record_hash"], effective_prev
+        )

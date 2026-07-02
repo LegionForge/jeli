@@ -23,7 +23,12 @@ async def _run_verify(settings: Settings) -> dict:
     )
     await db.connect()
     try:
-        tools = MemoryTools(db=db, embedder=None, chain_key=settings.chain_key)
+        tools = MemoryTools(
+            db=db,
+            embedder=None,
+            chain_key=settings.chain_key,
+            key_id=settings.chain_key_id,
+        )
         return await tools.verify_chain()
     finally:
         await db.close()

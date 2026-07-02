@@ -1,7 +1,7 @@
 """Unit tests for security layer: API key validation, injection defense."""
 
-import hmac
 import pytest
+
 from jeli_scoped_mcp.security import APIKeyValidator, InjectionDefense
 
 
