@@ -11,6 +11,11 @@
   content structurally unwritable even for the user tier
 - Markdown import pipeline (`scripts/import_markdown.py`) + search
   benchmark (`scripts/bench_search.py`); asymmetric query prefixes
+- `SCOPED_MCP_EMBED_KEEP_ALIVE` (default 30m): keeps the embed model
+  resident — eliminates the multi-second after-idle cold start on the
+  first query. (Measured honestly: steady-state p50 is unchanged at
+  ~160ms; that cost is arctic-embed2 inference itself. Future levers:
+  query-embedding cache, faster query encoder.)
 - Semantic search: pgvector `vector(1024)` + HNSW cosine index (alembic
   004); `search_memory` mode `semantic` returns per-hit `distance`
 - Ollama embedding provider implemented (`/api/embed`) and made the

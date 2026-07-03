@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
     ollama_model: str = os.getenv("OLLAMA_MODEL", "snowflake-arctic-embed2")
     embedding_dimensions: int = int(os.getenv("SCOPED_MCP_EMBEDDING_DIMENSIONS", "0"))
+    embed_keep_alive: str = os.getenv("SCOPED_MCP_EMBED_KEEP_ALIVE", "30m")
 
     # Server
     transport: Literal["stdio", "http"] = os.getenv("SCOPED_MCP_TRANSPORT", "stdio")  # type: ignore

@@ -54,6 +54,7 @@ class EmbeddingProvider(ABC):
                 settings.ollama_base_url,
                 settings.ollama_model,
                 dimensions=settings.embedding_dimensions or None,
+                keep_alive=settings.embed_keep_alive,
             )
         else:
             raise ValueError(f"Unknown embedding provider: {settings.embedding_provider}")
@@ -125,10 +126,17 @@ class OllamaProvider(EmbeddingProvider):
         base_url: str = "http://127.0.0.1:11434",
         model: str = "snowflake-arctic-embed2",
         dimensions: int | None = None,
+        keep_alive: str = "30m",
     ):
-        """Initialize with Ollama server URL and model."""
+        """Initialize with Ollama server URL and model.
+
+        keep_alive keeps the embed model resident between calls — query
+        embedding dominates end-to-end search latency (161ms vs ~15ms of
+        HNSW at 2.3k memories), and most of that is model paging.
+        """
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.keep_alive = keep_alive
         base_model = model.split(":")[0]
         dims = dimensions or self.MODEL_DIMENSIONS.get(base_model)
         if dims is None:
@@ -145,7 +153,11 @@ class OllamaProvider(EmbeddingProvider):
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"{self.base_url}/api/embed",
-                json={"model": self.model, "input": text},
+                json={
+                    "model": self.model,
+                    "input": text,
+                    "keep_alive": self.keep_alive,
+                },
                 timeout=aiohttp.ClientTimeout(total=60),
             ) as resp:
                 resp.raise_for_status()
