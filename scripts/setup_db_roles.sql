@@ -33,3 +33,22 @@ GRANT SELECT, INSERT ON memory_contradiction TO jeli_app;
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO jeli_app;
 
 -- explicitly no UPDATE, no DELETE, no TRUNCATE, anywhere.
+
+-- ── user tier ────────────────────────────────────────────────────────────────
+-- jeli_user: JP's own CLI operations (jeli revise / invalidate). May retire
+-- memories via COLUMN-level grants — structurally unable to modify content.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'jeli_user') THEN
+        CREATE ROLE jeli_user LOGIN;
+    END IF;
+END
+$$;
+
+REVOKE ALL ON memory_entry, memory_audit_log, memory_contradiction, memory_state_event FROM jeli_user;
+GRANT SELECT, INSERT ON memory_entry TO jeli_user;
+GRANT SELECT, INSERT ON memory_audit_log TO jeli_user;
+GRANT SELECT, INSERT ON memory_state_event TO jeli_user;
+GRANT SELECT ON memory_contradiction TO jeli_user;
+GRANT UPDATE (valid_until, superseded_by, amended_from) ON memory_entry TO jeli_user;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO jeli_user;

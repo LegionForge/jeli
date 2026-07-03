@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Hash-chained state events (alembic 006): `jeli revise` / `jeli invalidate`
+  — user-tier, never MCP tools; temporal columns become a verified cache;
+  `jeli verify` walks both chains and cross-checks. Closes the
+  THREAT-MODEL temporal-fields gap.
+- `jeli_user` DB role: column-level UPDATE grants (temporal fields only) —
+  content structurally unwritable even for the user tier
+- Markdown import pipeline (`scripts/import_markdown.py`) + search
+  benchmark (`scripts/bench_search.py`); asymmetric query prefixes
 - Semantic search: pgvector `vector(1024)` + HNSW cosine index (alembic
   004); `search_memory` mode `semantic` returns per-hit `distance`
 - Ollama embedding provider implemented (`/api/embed`) and made the

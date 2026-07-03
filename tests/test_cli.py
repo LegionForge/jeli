@@ -25,10 +25,17 @@ def _patch(monkeypatch, verify_result, chain_key="test-chain-key"):
 def test_verify_valid_chain_exit_0(monkeypatch, capsys):
     _patch(
         monkeypatch,
-        {"chain_valid": True, "records_checked": 3, "first_bad_record": None},
+        {
+            "chain_valid": True,
+            "records_checked": 3,
+            "first_bad_record": None,
+            "state_chain_valid": True,
+            "events_checked": 1,
+            "cache_consistent": True,
+        },
     )
     assert cli.main(["verify"]) == 0
-    assert "chain valid" in capsys.readouterr().out
+    assert "chains valid" in capsys.readouterr().out
 
 
 def test_verify_broken_chain_exit_1(monkeypatch, capsys):
@@ -56,3 +63,19 @@ def test_verify_missing_chain_key_exit_2(monkeypatch, capsys):
 def test_no_command_exits(monkeypatch):
     with pytest.raises(SystemExit):
         cli.main([])
+
+
+def test_verify_cache_mismatch_exit_1(monkeypatch, capsys):
+    _patch(
+        monkeypatch,
+        {
+            "chain_valid": True,
+            "records_checked": 3,
+            "first_bad_record": None,
+            "state_chain_valid": True,
+            "events_checked": 1,
+            "cache_consistent": False,
+            "mismatches": ["abc: retired in columns, no chained event"],
+        },
+    )
+    assert cli.main(["verify"]) == 1
