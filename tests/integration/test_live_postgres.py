@@ -54,7 +54,9 @@ async def live_tools():
     db = AsyncPostgresPool(DB_URL, min_size=1, max_size=4)
     await db.connect()
     # each test starts from a clean slate
-    await db.execute("TRUNCATE memory_audit_log, memory_contradiction, memory_entry")
+    await db.execute(
+        "TRUNCATE memory_state_event, memory_audit_log, memory_contradiction, memory_entry"
+    )
     tools = MemoryTools(db=db, embedder=StubEmbedder(), chain_key="itest-chain-key", key_id="k1")
     yield tools, db
     await db.close()
@@ -146,3 +148,72 @@ async def test_semantic_search_live(live_tools):
     hits = await tools.search_memory(query="the sky is blue today", actor="itest", mode="semantic")
     assert hits[0]["content"] == "the sky is blue today"
     assert hits[0]["distance"] < 0.01 < hits[1]["distance"]
+
+
+async def test_revise_and_invalidate_are_chained_events(live_tools):
+    from jeli_scoped_mcp.tools.state_tools import StateTools
+
+    tools, db = live_tools
+    state = StateTools(db=db, memory_tools=tools, chain_key="itest-chain-key", key_id="k1")
+    r = await tools.capture_memory(
+        content="JP prefers YAML",  # wrong on purpose
+        memory_type="preference",
+        trust_score=0.6,
+        actor="itest",
+    )
+    out = await state.revise(
+        r["id"], "JP prefers TOML over YAML", reason="correcting", actor="itest"
+    )
+    assert out["event"]["event_type"] == "superseded"
+
+    # original retired, successor live, links set
+    trail = await tools.audit_trail(memory_id=r["id"], actor="itest")
+    assert trail["valid"] is False
+    assert trail["superseded_by"] == out["successor"]["id"]
+    assert "superseded" in [e["action"] for e in trail["audit_events"]]
+
+    # retired memories leave search; successor is findable
+    hits = await tools.search_memory(query="toml", actor="itest", mode="fts")
+    assert [h["id"] for h in hits] == [out["successor"]["id"]]
+
+    v = await state.verify()
+    assert v["state_chain_valid"] is True and v["cache_consistent"] is True
+
+    inv = await state.invalidate(out["successor"]["id"], reason="test retire", actor="itest")
+    assert inv["event_type"] == "invalidated"
+    v = await state.verify()
+    assert v["events_checked"] == 2 and v["cache_consistent"] is True
+
+
+async def test_column_tamper_without_event_is_detected(live_tools):
+    from jeli_scoped_mcp.tools.state_tools import StateTools
+
+    tools, db = live_tools
+    state = StateTools(db=db, memory_tools=tools, chain_key="itest-chain-key", key_id="k1")
+    r = await tools.capture_memory(
+        content="a fact someone wants hidden",
+        memory_type="semantic",
+        trust_score=0.6,
+        actor="itest",
+    )
+    # attacker with UPDATE rights hides the memory WITHOUT a chained event
+    await db.execute("UPDATE memory_entry SET valid_until = now() WHERE id = $1", r["id"])
+    v = await state.verify()
+    assert v["cache_consistent"] is False
+    assert any(str(r["id"]) in m for m in v["mismatches"])
+
+
+async def test_double_retire_refused(live_tools):
+    import pytest as _pytest
+
+    from jeli_scoped_mcp.tools.memory_tools import MemoryToolError
+    from jeli_scoped_mcp.tools.state_tools import StateTools
+
+    tools, db = live_tools
+    state = StateTools(db=db, memory_tools=tools, chain_key="itest-chain-key", key_id="k1")
+    r = await tools.capture_memory(
+        content="retire me once", memory_type="transient", trust_score=0.6, actor="itest"
+    )
+    await state.invalidate(r["id"], reason="first", actor="itest")
+    with _pytest.raises(MemoryToolError):
+        await state.invalidate(r["id"], reason="second", actor="itest")
