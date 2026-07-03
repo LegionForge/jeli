@@ -136,7 +136,7 @@ class MemoryTools:
         # fork the chain, making legitimate data fail verification.
         async with self.db.locked_transaction(CHAIN_WRITE_LOCK) as conn:
             prev_hash = await conn.fetchval(
-                "SELECT record_hash FROM memory_entry ORDER BY created_at DESC, id DESC LIMIT 1"
+                "SELECT record_hash FROM memory_entry ORDER BY chain_seq DESC LIMIT 1"
             )
             canonical = build_canonical_record(
                 content=content,
@@ -366,7 +366,7 @@ class MemoryTools:
             SELECT id, content, embedding_model, embedding_dimensions,
                    metadata, trust_score, memory_type, prev_hash, record_hash,
                    key_id
-            FROM memory_entry ORDER BY created_at ASC, id ASC
+            FROM memory_entry ORDER BY chain_seq ASC
             """)
         prev_hash: str | None = None
         for row in rows:

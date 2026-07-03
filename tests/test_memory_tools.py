@@ -128,7 +128,7 @@ class FakePool:
             ]
             hits.sort(key=lambda m: (-float(m["trust_score"]), m["created_at"]))
             return hits[:limit]
-        if "ORDER BY created_at ASC" in query:
+        if "ORDER BY chain_seq ASC" in query:
             return list(self.memories)
         raise AssertionError(f"unexpected fetchall: {query}")
 
