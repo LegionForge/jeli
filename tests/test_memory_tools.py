@@ -37,6 +37,9 @@ class FakeEmbedder:
             embedded_at=datetime.now(UTC),
         )
 
+    async def embed_query(self, text: str) -> EmbeddingResult:
+        return await self.embed("query: " + text)
+
 
 class FakePool:
     """Understands exactly the queries MemoryTools issues."""
@@ -125,7 +128,7 @@ class FakePool:
             ]
             hits.sort(key=lambda m: (-float(m["trust_score"]), m["created_at"]))
             return hits[:limit]
-        if "ORDER BY created_at ASC" in query:
+        if "ORDER BY chain_seq ASC" in query:
             return list(self.memories)
         raise AssertionError(f"unexpected fetchall: {query}")
 

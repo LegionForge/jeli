@@ -43,6 +43,11 @@ class StubEmbedder:
             embedded_at=datetime.now(UTC),
         )
 
+    async def embed_query(self, text: str) -> EmbeddingResult:
+        # symmetric stub: identical text must hash to the identical vector,
+        # so the exact-match distance≈0 assertions stay meaningful
+        return await self.embed(text)
+
 
 @pytest.fixture
 async def live_tools():
