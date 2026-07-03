@@ -47,6 +47,7 @@ class FakePool:
     def __init__(self):
         self.memories: list[dict] = []
         self.audit: list[dict] = []
+        self.state_events: list[dict] = []
         self.lock_acquired = 0
 
     @asynccontextmanager
@@ -55,6 +56,10 @@ class FakePool:
         yield self
 
     async def fetchval(self, query, *args):
+        if "SELECT now()" in query:
+            return datetime.now(UTC)
+        if "memory_state_event" in query:
+            return self.state_events[-1]["record_hash"] if self.state_events else None
         assert "record_hash FROM memory_entry" in query
         if not self.memories:
             return None
@@ -103,6 +108,33 @@ class FakePool:
             }
             self.memories.append(row)
             return {"id": row["id"], "created_at": row["created_at"]}
+        if query.strip().startswith("INSERT INTO memory_state_event"):
+            (
+                etype,
+                target,
+                successor,
+                reason,
+                actor,
+                valid_until,
+                prev_hash,
+                record_hash,
+                key_id,
+            ) = args
+            row = {
+                "id": uuid.uuid4(),
+                "event_type": etype,
+                "target_memory_id": target,
+                "successor_memory_id": successor,
+                "reason": reason,
+                "actor": actor,
+                "valid_until": valid_until,
+                "prev_hash": prev_hash,
+                "record_hash": record_hash,
+                "key_id": key_id,
+                "created_at": datetime.now(UTC),
+            }
+            self.state_events.append(row)
+            return {"id": row["id"], "created_at": row["created_at"]}
         if "FROM memory_entry WHERE id" in query:
             for m in self.memories:
                 if str(m["id"]) == str(args[0]):
@@ -128,21 +160,46 @@ class FakePool:
             ]
             hits.sort(key=lambda m: (-float(m["trust_score"]), m["created_at"]))
             return hits[:limit]
+        if "FROM memory_state_event ORDER BY chain_seq ASC" in query:
+            return list(self.state_events)
+        if "valid_until IS NOT NULL OR superseded_by IS NOT NULL" in query:
+            return [
+                m
+                for m in self.memories
+                if m["valid_until"] is not None or m["superseded_by"] is not None
+            ]
         if "ORDER BY chain_seq ASC" in query:
             return list(self.memories)
         raise AssertionError(f"unexpected fetchall: {query}")
 
     async def execute(self, query, *args):
+        if "SET valid_until" in query:
+            valid_until, successor, target = args
+            for m in self.memories:
+                if str(m["id"]) == str(target):
+                    m["valid_until"] = valid_until
+                    m["superseded_by"] = successor
+            return
+        if "SET amended_from" in query:
+            amended_from, target = args
+            for m in self.memories:
+                if str(m["id"]) == str(target):
+                    m["amended_from"] = amended_from
+            return
         assert "INSERT INTO memory_audit_log" in query
         if "source_session" in query:
             memory_id, actor, session_id, details = args
+            action = "created" if "'created'" in query else "searched"
+        elif len(args) == 4:
+            memory_id, action, actor, details = args
         else:
             memory_id, actor, details = args
+            action = "created" if "'created'" in query else "searched"
         self.audit.append(
             {
                 "memory_id": memory_id,
                 "actor": actor,
-                "action": "created" if "'created'" in query else "searched",
+                "action": action,
                 "timestamp": datetime.now(UTC),
                 "details": details,
             }
