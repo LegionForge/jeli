@@ -242,7 +242,7 @@ class MemoryTools:
                     "semantic search needs an embedding provider (read-only "
                     "mode has none) — use mode=fts"
                 )
-            q_embedding = await self.embedder.embed(query)
+            q_embedding = await self.embedder.embed_query(query)
             if q_embedding.dimensions != INDEX_DIMENSIONS:
                 raise MemoryToolError(
                     f"query embedding is {q_embedding.dimensions}-dim; the "

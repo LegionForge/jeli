@@ -22,8 +22,17 @@ class EmbeddingProvider(ABC):
 
     @abstractmethod
     async def embed(self, text: str) -> EmbeddingResult:
-        """Embed text and return vector + provenance."""
+        """Embed a DOCUMENT and return vector + provenance."""
         pass
+
+    async def embed_query(self, text: str) -> EmbeddingResult:
+        """Embed a QUERY for retrieval against stored documents.
+
+        Asymmetric-retrieval models (arctic-embed family) are trained with a
+        query prefix; symmetric models just reuse embed(). Override when the
+        model needs query-side conditioning.
+        """
+        return await self.embed(text)
 
     @abstractmethod
     def model_id(self) -> str:
@@ -95,6 +104,13 @@ class OpenAIProvider(EmbeddingProvider):
 class OllamaProvider(EmbeddingProvider):
     """Ollama local embedding provider — the sovereign default."""
 
+    # Asymmetric-retrieval families that expect a prefixed query side.
+    QUERY_PREFIXES = {
+        "snowflake-arctic-embed": "query: ",
+        "snowflake-arctic-embed2": "query: ",
+        "nomic-embed-text": "search_query: ",
+    }
+
     # Known model dimensions; unknown models must pass dimensions explicitly.
     MODEL_DIMENSIONS = {
         "nomic-embed-text": 768,
@@ -146,6 +162,11 @@ class OllamaProvider(EmbeddingProvider):
             dimensions=len(vector),
             embedded_at=datetime.now(UTC),
         )
+
+    async def embed_query(self, text: str) -> EmbeddingResult:
+        """Query-side embedding with the model's retrieval prefix."""
+        prefix = self.QUERY_PREFIXES.get(self.model.split(":")[0], "")
+        return await self.embed(prefix + text)
 
     def model_id(self) -> str:
         """Return model identifier."""

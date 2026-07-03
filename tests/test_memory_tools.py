@@ -37,6 +37,9 @@ class FakeEmbedder:
             embedded_at=datetime.now(UTC),
         )
 
+    async def embed_query(self, text: str) -> EmbeddingResult:
+        return await self.embed("query: " + text)
+
 
 class FakePool:
     """Understands exactly the queries MemoryTools issues."""
