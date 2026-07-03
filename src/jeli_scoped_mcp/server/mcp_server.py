@@ -126,7 +126,7 @@ class ScopedMCPServer:
             return await self.tools.search_memory(
                 query=arguments["query"],
                 actor=actor,
-                mode=arguments.get("mode", "fts"),
+                mode=arguments.get("mode", "semantic"),
                 limit=arguments.get("limit", 10),
             )
         if name == "audit_trail":
