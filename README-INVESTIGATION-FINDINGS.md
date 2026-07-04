@@ -69,7 +69,7 @@ Competitors (mem0, Letta) have memory. **Jeli has intelligent, trustable, tiered
 **What:** How Jeli actually runs on your Mac Mini
 
 **Key Sections:**
-- PostgreSQL setup (local, port 5433)
+- PostgreSQL 17 (local, port 5442)
 - Redis setup (L0 cache)
 - Python curation engine (hourly job via launchd)
 - MCP server integration (with Claude Code)

@@ -123,7 +123,7 @@ Jeli's Phase 1 core (hash-chain + trust scoring + contradiction detection + secu
 - **Attack:** Database breach. Attacker reads plaintext memory content
 - **Current Defense:** None (encryption deferred to Phase 2)
 - **Operational Mitigations:**
-  - Database at `127.0.0.1:5433` (localhost only, requires local access)
+  - Database at `127.0.0.1:5442` (localhost only, requires local access)
   - No memory exported via API without MCP auth
 - **Risk Level:** VERY HIGH (if database breached, content is readable)
 - **Acceptable?** YES (encrypted at-rest is Phase 2; local-only DB is Phase 1 acceptable risk)
@@ -225,7 +225,7 @@ Scoped MCP ──[HTTPS]──> OpenAI API ──> Embed content ──> Return 
 
 ### 3. **Database (Highest Risk if Breached)**
 ```
-Postgres at 127.0.0.1:5433 (local only)
+Postgres at 127.0.0.1:5442 (local only)
 ├── memory_entry (plaintext content)
 ├── memory_audit_log (immutable)
 └── memory_contradiction (append-only)

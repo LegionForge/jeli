@@ -57,8 +57,20 @@ class DaemonRunner:
         self.runner_id = runner_id or f"runner-{uuid.uuid4().hex[:8]}"
         self._tasks: list[asyncio.Task] = []
 
+    async def _check_embedder(self) -> None:
+        """Fail fast if the embedding service is unreachable at startup."""
+        try:
+            await self.embedder.embed("health check")
+        except Exception as exc:
+            provider = type(self.embedder).__name__
+            raise RuntimeError(
+                f"Embedding service unreachable ({provider}): {exc}\n"
+                "Start Ollama and ensure the model is loaded before running daemons."
+            ) from exc
+
     async def run_forever(self):
         """Start all daemons. Each restarts independently on crash."""
+        await self._check_embedder()
         classifier = IngestionClassifier(
             embedder=self.embedder,
             db=self.db,

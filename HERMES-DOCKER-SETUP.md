@@ -62,7 +62,7 @@ docker-compose -f docker-compose.hermes.yml exec hermes /bin/bash
 ### Database Connection (Future)
 ```bash
 # From host
-psql -h 127.0.0.1 -p 5433 -U ob1_app -d openbrain
+psql -h 127.0.0.1 -p 5433 -U jeli_app -d jeli
 # Password: from .env.hermes POSTGRES_PASSWORD
 ```
 
@@ -120,7 +120,7 @@ When ready (after Scoped MCP implementation):
 ```bash
 # Add to docker-compose.hermes.yml:
 SCOPED_MCP_API_KEY: from .env.hermes
-SCOPED_MCP_DB_URL: postgresql://ob1_app:password@jeli-postgres:5432/openbrain
+SCOPED_MCP_DB_URL: postgresql://jeli_app:password@jeli-postgres:5432/jeli
 ```
 
 Then Hermes will capture memories to Jeli with full auditability.
