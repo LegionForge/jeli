@@ -263,7 +263,7 @@ class MLXProvider(EmbeddingProvider):
         if encoder is None:
             raise RuntimeError("MLXProvider._load() failed to set encoder")
         vector = await loop.run_in_executor(
-            None, lambda: encoder.encode(text, normalize_embeddings=True).tolist()  # type: ignore[union-attr]
+            None, lambda: encoder.encode(text, normalize_embeddings=True).tolist()  # type: ignore[attr-defined]
         )
         if len(vector) != self._dimensions:
             raise ValueError(

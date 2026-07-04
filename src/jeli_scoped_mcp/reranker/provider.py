@@ -18,6 +18,18 @@ class RerankerProvider(ABC):
         """Score candidates against query. Returns same list sorted by
         relevance_score DESC, with 'relevance_score' float added to each item."""
 
+    @classmethod
+    def from_settings(cls, settings: "Settings") -> "RerankerProvider":
+        if not settings.reranker_enabled or not settings.litellm_base_url:
+            return NullReranker()
+        return LiteLLMReranker(
+            base_url=settings.litellm_base_url,
+            api_key=settings.litellm_api_key,
+            model=settings.reranker_model,
+            timeout=settings.reranker_timeout,
+            candidate_limit=settings.reranker_candidate_limit,
+        )
+
 
 class NullReranker(RerankerProvider):
     """No-op reranker — converts vector distance to a relevance score without LLM."""
@@ -126,14 +138,3 @@ class LiteLLMReranker(RerankerProvider):
             scores.append(0.0)
         return scores[:expected]
 
-    @classmethod
-    def from_settings(cls, settings: "Settings") -> "RerankerProvider":
-        if not settings.reranker_enabled or not settings.litellm_base_url:
-            return NullReranker()
-        return cls(
-            base_url=settings.litellm_base_url,
-            api_key=settings.litellm_api_key,
-            model=settings.reranker_model,
-            timeout=settings.reranker_timeout,
-            candidate_limit=settings.reranker_candidate_limit,
-        )
