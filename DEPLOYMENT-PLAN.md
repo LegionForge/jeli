@@ -15,7 +15,7 @@
 │                                                          │
 │  ┌────────────────────────────────────────────────────┐ │
 │  │  launchd (Mac Native Process Management)           │ │
-│  │  ├─ jeli-postgres (PostgreSQL 15, port 5433)      │ │
+│  │  ├─ jeli-postgres (PostgreSQL 15, port 5442)      │ │
 │  │  ├─ jeli-curation (Python, hourly cron + API)     │ │
 │  │  ├─ jeli-mcp (MCP server, stdio/TCP)              │ │
 │  │  └─ jeli-redis (Redis local, L0 cache)            │ │
@@ -58,10 +58,10 @@ brew install postgresql@15
 brew services start postgresql@15
 
 # Verify
-pg_isready -h 127.0.0.1 -p 5433
+pg_isready -h 127.0.0.1 -p 5442
 
 # Create jeli database
-createdb -h 127.0.0.1 -p 5433 jeli
+createdb -h 127.0.0.1 -p 5442 jeli
 
 # Run migrations (Alembic)
 cd /Volumes/MAC_MINI_1TB/LegionForge-jeli
@@ -72,7 +72,7 @@ alembic upgrade head
 ```ini
 [postgres]
 host = 127.0.0.1
-port = 5433
+port = 5442
 database = jeli
 user = jp
 
@@ -242,7 +242,7 @@ source venv/bin/activate
 
 # Run curation job
 python -m jeli.jobs.evict_and_promote \
-  --postgres-uri postgresql://jp:@127.0.0.1:5433/jeli \
+  --postgres-uri postgresql://jp:@127.0.0.1:5442/jeli \
   --redis-uri redis://127.0.0.1:6379 \
   --log-file /Volumes/MAC_MINI_1TB/jeli-data/curation.log
 
@@ -331,7 +331,7 @@ In Claude Code settings (`~/.config/Claude/settings.json`):
 echo "=== Jeli Health Check ===" $(date)
 
 # PostgreSQL
-pg_isready -h 127.0.0.1 -p 5433
+pg_isready -h 127.0.0.1 -p 5442
   && echo "✓ PostgreSQL healthy" \
   || echo "✗ PostgreSQL DOWN"
 
@@ -341,12 +341,12 @@ redis-cli ping
   || echo "✗ Redis DOWN"
 
 # Database size
-psql -h 127.0.0.1 -p 5433 -d jeli -c "
+psql -h 127.0.0.1 -p 5442 -d jeli -c "
   SELECT pg_size_pretty(pg_database_size('jeli')) as db_size;
 "
 
 # Fact count by layer
-psql -h 127.0.0.1 -p 5433 -d jeli -c "
+psql -h 127.0.0.1 -p 5442 -d jeli -c "
   SELECT 
     'L0 (hot)' as layer, COUNT(*) as count FROM memories_l0
   UNION ALL
@@ -401,7 +401,7 @@ ALERT_CONDITIONS = {
 
 ```bash
 1. launchctl loads all jeli plist files (automatic)
-2. PostgreSQL starts (port 5433)
+2. PostgreSQL starts (port 5442)
 3. Redis starts (port 6379)
 4. MCP server starts (stdio/TCP)
 5. First curation job runs (scheduled for +1 hour)
@@ -493,7 +493,7 @@ python -m jeli.jobs.evict_and_promote --verbose --dry-run
 # If looks good, run without --dry-run
 
 # 4. Verify
-psql -h 127.0.0.1 -p 5433 -d jeli -c "SELECT AVG(significance) FROM memories_l1_primary;"
+psql -h 127.0.0.1 -p 5442 -d jeli -c "SELECT AVG(significance) FROM memories_l1_primary;"
 ```
 
 ---

@@ -42,9 +42,9 @@ services:
     image: postgres:16-alpine
     container_name: jeli-postgres
     environment:
-      - POSTGRES_USER=ob1_app
+      - POSTGRES_USER=jeli_app
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=openbrain
+      - POSTGRES_DB=jeli
     volumes:
       - jeli-db:/var/lib/postgresql/data
     ports:
@@ -52,7 +52,7 @@ services:
     networks:
       - jeli-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ob1_app"]
+      test: ["CMD-SHELL", "pg_isready -U jeli_app"]
       interval: 10s
       timeout: 5s
       retries: 5

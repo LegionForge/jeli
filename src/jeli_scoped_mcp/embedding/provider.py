@@ -56,6 +56,11 @@ class EmbeddingProvider(ABC):
                 dimensions=settings.embedding_dimensions or None,
                 keep_alive=settings.embed_keep_alive,
             )
+        elif settings.embedding_provider == "mlx":
+            return MLXProvider(
+                model=settings.ollama_model,  # reuse same env var for model name
+                dimensions=settings.embedding_dimensions or None,
+            )
         else:
             raise ValueError(f"Unknown embedding provider: {settings.embedding_provider}")
 
@@ -150,7 +155,10 @@ class OllamaProvider(EmbeddingProvider):
         """Embed text via the Ollama /api/embed endpoint."""
         import aiohttp
 
-        async with aiohttp.ClientSession() as session:
+        # force_close=True: Ollama's HTTP server misbehaves on keep-alive
+        # reuse — each request gets a fresh connection.
+        connector = aiohttp.TCPConnector(force_close=True)
+        async with aiohttp.ClientSession(connector=connector) as session:
             async with session.post(
                 f"{self.base_url}/api/embed",
                 json={
@@ -186,4 +194,96 @@ class OllamaProvider(EmbeddingProvider):
 
     def dimensions(self) -> int:
         """Return embedding dimensions."""
+        return self._dimensions
+
+
+class MLXProvider(EmbeddingProvider):
+    """Apple Silicon native embedding via sentence-transformers + MPS.
+
+    No Ollama server required — model runs in-process on Metal. Install:
+        pip install "jeli-scoped-mcp[mlx]"
+
+    The 1024-dim index standard is maintained: use a model that natively
+    emits 1024 dims (e.g. Snowflake/snowflake-arctic-embed-m-v1.5) or set
+    SCOPED_MCP_EMBEDDING_DIMENSIONS to truncate via matryoshka.
+    """
+
+    KNOWN_DIMENSIONS: dict[str, int] = {
+        "Snowflake/snowflake-arctic-embed-m-v1.5": 1024,
+        "Snowflake/snowflake-arctic-embed-l-v2.0": 1024,
+        "nomic-ai/nomic-embed-text-v1.5": 768,
+        "BAAI/bge-m3": 1024,
+    }
+
+    # Asymmetric query prefixes for arctic-embed family.
+    QUERY_PREFIXES: dict[str, str] = {
+        "Snowflake/snowflake-arctic-embed-m-v1.5": "query: ",
+        "Snowflake/snowflake-arctic-embed-l-v2.0": "query: ",
+        "nomic-ai/nomic-embed-text-v1.5": "search_query: ",
+    }
+
+    def __init__(
+        self,
+        model: str = "Snowflake/snowflake-arctic-embed-m-v1.5",
+        dimensions: int | None = None,
+    ):
+        self._model_name = model
+        dims = dimensions or self.KNOWN_DIMENSIONS.get(model)
+        if dims is None:
+            raise ValueError(
+                f"Unknown embedding dimensions for MLX model '{model}' — "
+                "set SCOPED_MCP_EMBEDDING_DIMENSIONS explicitly"
+            )
+        self._dimensions = dims
+        self._encoder: object | None = None  # lazy-loaded; never None after _load()
+
+    def _load(self):
+        """Lazy-load sentence-transformers model onto MPS device."""
+        if self._encoder is not None:
+            return
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as e:
+            raise ImportError(
+                "MLX provider requires: pip install 'jeli-scoped-mcp[mlx]'"
+            ) from e
+        import torch
+
+        device = "mps" if torch.backends.mps.is_available() else "cpu"
+        self._encoder = SentenceTransformer(self._model_name, device=device)
+
+    async def embed(self, text: str) -> EmbeddingResult:
+        """Embed text in-process via sentence-transformers on Metal (MPS)."""
+        import asyncio
+
+        self._load()
+        loop = asyncio.get_event_loop()
+        # Run blocking inference in thread pool so the event loop stays free.
+        encoder = self._encoder
+        if encoder is None:
+            raise RuntimeError("MLXProvider._load() failed to set encoder")
+        vector = await loop.run_in_executor(
+            None, lambda: encoder.encode(text, normalize_embeddings=True).tolist()  # type: ignore[attr-defined]
+        )
+        if len(vector) != self._dimensions:
+            raise ValueError(
+                f"MLX model {self._model_name} returned {len(vector)} dims, "
+                f"expected {self._dimensions}"
+            )
+        return EmbeddingResult(
+            vector=vector,
+            model_id=f"mlx/{self._model_name}",
+            dimensions=len(vector),
+            embedded_at=datetime.now(UTC),
+        )
+
+    async def embed_query(self, text: str) -> EmbeddingResult:
+        """Query-side embedding with model's retrieval prefix."""
+        prefix = self.QUERY_PREFIXES.get(self._model_name, "")
+        return await self.embed(prefix + text)
+
+    def model_id(self) -> str:
+        return f"mlx/{self._model_name}"
+
+    def dimensions(self) -> int:
         return self._dimensions

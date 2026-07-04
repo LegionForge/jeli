@@ -446,7 +446,7 @@ jeli.evict()     # Engine only
 ## Deployment Stack
 
 **Local Mac Mini:**
-- PostgreSQL 15+ (local, port 5433)
+- PostgreSQL 17 (local, port 5442)
 - Redis (optional, for L0 cache)
 - Python 3.11+ (Alembic migrations, curation engine)
 - Node.js/Deno (MCP server, API endpoints)

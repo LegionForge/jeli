@@ -55,7 +55,7 @@ async def live_tools():
     await db.connect()
     # each test starts from a clean slate
     await db.execute(
-        "TRUNCATE memory_state_event, memory_audit_log, memory_contradiction, memory_entry"
+        "TRUNCATE memory_entry, memory_audit_log, memory_state_event CASCADE"
     )
     tools = MemoryTools(db=db, embedder=StubEmbedder(), chain_key="itest-chain-key", key_id="k1")
     yield tools, db

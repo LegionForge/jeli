@@ -25,7 +25,7 @@
 
 2. **Prepare Mac Mini (1 hour)**
    - [ ] Create `/Volumes/MAC_MINI_1TB/jeli-data/` directory
-   - [ ] PostgreSQL running on port 5433
+   - [ ] PostgreSQL running on port 5442
    - [ ] Redis running on port 6379
    - [ ] Test both with health check script
 
@@ -74,7 +74,7 @@ Then come back and re-answer: "Is this worth 40 hours dev time?"
 
 **Hour 5-8: Environment Setup**
 - [ ] Create `/Volumes/MAC_MINI_1TB/jeli-data/` directory
-- [ ] Verify PostgreSQL installed and running (port 5433)
+- [ ] Verify PostgreSQL installed and running (port 5442)
 - [ ] Verify Redis installed and running (port 6379)
 - [ ] Run health check: `/Volumes/MAC_MINI_1TB/LegionForge-jeli/bin/health-check.sh`
 

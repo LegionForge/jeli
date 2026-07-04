@@ -18,7 +18,7 @@ if config.config_file_name is not None:
         pass
 
 # Load database URL from environment or use default
-db_url = os.getenv("SCOPED_MCP_DB_URL", "postgresql://ob1_app@127.0.0.1:5433/openbrain")
+db_url = os.getenv("SCOPED_MCP_DB_URL", "postgresql://jeli_app@127.0.0.1:5442/jeli")
 config.set_main_option("sqlalchemy.url", db_url)
 
 
