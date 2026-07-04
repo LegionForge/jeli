@@ -260,7 +260,8 @@ class MLXProvider(EmbeddingProvider):
         loop = asyncio.get_event_loop()
         # Run blocking inference in thread pool so the event loop stays free.
         encoder = self._encoder
-        assert encoder is not None
+        if encoder is None:
+            raise RuntimeError("MLXProvider._load() failed to set encoder")
         vector = await loop.run_in_executor(
             None, lambda: encoder.encode(text, normalize_embeddings=True).tolist()  # type: ignore[union-attr]
         )
