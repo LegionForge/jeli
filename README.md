@@ -281,11 +281,23 @@ No shell, no arbitrary file access, all calls logged with source (agent ID, sess
 
 ## Technology Stack
 
-- **Storage:** PostgreSQL + pgvector (existing OB1/lf2b)
+- **Storage:** PostgreSQL + pgvector
 - **Agent Interface:** MCP (Model Context Protocol)
 - **Agents:** Hermes (primary), Claude/Dispatch, future agents
-- **Embedding Model:** Ollama local (qwen3-embedding) or cloud (OpenAI) — tradeoff: sovereignty vs quality
+- **Embedding Model:** Ollama local (snowflake-arctic-embed2 default) or OpenAI (cloud opt-in) — sovereignty vs quality tradeoff
 - **Backup & DR:** Local + encrypted remote (S3-compatible or peer)
+
+### Why HNSW at 1024 dimensions
+
+The vector index is `vector(1024)` with an HNSW (Hierarchical Navigable Small World) index. This is an increasingly common choice across the vector database ecosystem and worth explaining.
+
+**What HNSW is.** HNSW builds a multi-layer graph over your vectors. Each layer is a "small world" graph where any two nodes are reachable in a logarithmic number of hops. Search starts at the top (coarse) layer and progressively narrows toward the nearest neighbors at the bottom layer. The result: sub-millisecond approximate nearest-neighbor (ANN) queries even at tens of thousands of records, with recall rates typically above 95%.
+
+**Why the ecosystem is converging on it.** HNSW has two properties that IVFFlat (the older alternative) lacks: it needs no training phase — you can add records one at a time without rebuilding — and it maintains high recall across a wide range of dataset sizes without tuning. This makes it the practical default for systems where the dataset grows continuously and reindexing is expensive. pgvector added HNSW in v0.5.0 (2023) specifically because it outperforms IVFFlat for most real workloads. Qdrant, Weaviate, ChromaDB (via hnswlib), and Redis all use HNSW as their primary index. Elasticsearch added it in 8.0. It is the approximate nearest-neighbor algorithm that most major vector databases have settled on.
+
+**Why 1024 dimensions specifically.** Several high-quality embedding models converge naturally on 1024 dims: `snowflake-arctic-embed2` and `snowflake-arctic-embed` emit 1024 natively; `qwen3-embedding` and `BAAI/bge-m3` also produce 1024-dim vectors. OpenAI's `text-embedding-3-small` supports matryoshka representation learning (MRL) and can be truncated to exactly 1024 with negligible quality loss. This makes 1024 the highest-quality dimension count that is interoperable across local (Ollama), cloud (OpenAI), and multilingual (Qwen3, bge-m3) providers without a schema migration when you switch models.
+
+At personal memory scale (1k–100k records) an HNSW index at 1024 dims fits comfortably in RAM, queries in under a millisecond, and never needs to be retrained. **Changing embedding models in Jeli is a re-embedding job, never a schema migration** — the 1024-dim index stays the same regardless of which model produced the vectors.
 
 ## Status
 
