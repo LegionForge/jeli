@@ -235,7 +235,7 @@ class MLXProvider(EmbeddingProvider):
                 "set SCOPED_MCP_EMBEDDING_DIMENSIONS explicitly"
             )
         self._dimensions = dims
-        self._encoder: "object | None" = None  # lazy-loaded; never None after _load()
+        self._encoder: object | None = None  # lazy-loaded; never None after _load()
 
     def _load(self):
         """Lazy-load sentence-transformers model onto MPS device."""
