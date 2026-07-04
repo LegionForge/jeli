@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 
 from ..database.pool import AsyncPostgresPool
 from ..tools.memory_tools import MemoryTools
-from .classifier import IngestionClassifier, content_hash
+from .classifier import IngestionClassifier
 from .models import InboxStatus
 
 logger = logging.getLogger(__name__)

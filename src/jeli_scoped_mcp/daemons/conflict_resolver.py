@@ -12,7 +12,11 @@ from datetime import UTC, datetime
 
 import asyncpg
 
-from ..core.contradiction import ContradictionClassifier, ContradictionDetector, ContradictionSeverity
+from ..core.contradiction import (
+    ContradictionClassifier,
+    ContradictionDetector,
+    ContradictionSeverity,
+)
 from ..database.pool import AsyncPostgresPool
 from ..embedding.provider import EmbeddingProvider
 
@@ -64,7 +68,7 @@ class ConflictResolverDaemon:
                                 asyncio.shield(self._notify_event.wait()),
                                 timeout=POLL_INTERVAL_SECONDS,
                             )
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             pass
                         finally:
                             self._notify_event.clear()
@@ -212,9 +216,8 @@ class ConflictResolverDaemon:
         old_trust = old_mem["trust_score"]
         loser_id = old_mem["id"] if new_trust >= old_trust else new_mem["id"]
 
-        from ..core.hash_chain import build_canonical_record, compute_record_hash
-        from ..tools.state_tools import StateTools
         from ..tools.memory_tools import MemoryTools
+        from ..tools.state_tools import StateTools
 
         # Use StateTools to invalidate the loser — this writes a chained state event.
         tools = MemoryTools(db=self.db, embedder=None, chain_key=self.chain_key, key_id=self.key_id)

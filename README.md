@@ -156,7 +156,7 @@ jeli verify                          # walk the chain, report first tampered rec
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `SCOPED_MCP_DB_URL` | `postgresql://...:5433/openbrain` | PostgreSQL connection |
+| `SCOPED_MCP_DB_URL` | `postgresql://jeli_app:...:5442/jeli` | PostgreSQL connection |
 | `SCOPED_MCP_API_KEY` | *(required)* | server auth key |
 | `SCOPED_MCP_CHAIN_KEY` | *(required)* | HMAC signing key for the hash chain |
 | `SCOPED_MCP_CHAIN_KEY_ID` | `k1` | identity of the active chain key (rotation: new key ⇒ new id; old records verify under their own key) |
@@ -178,6 +178,27 @@ git config core.hooksPath .githooks
 
 - **Architecture & Development:** See `CLAUDE.md` in this repository
 - **Extended Documentation:** Project vision, security posture, and data integrity guidelines live in your vault
+
+## Acknowledgements & Prior Art
+
+Jeli was shaped by studying these projects and ideas. Direct attribution where their design influenced this codebase:
+
+### Nate B. Jones — [OB1 / OpenBrain1](https://github.com/NateBJones-Projects/OB1)
+The **Bouncer** pattern (memory inbox with pre-write classification) was directly inspired by Nate's talks and writing on OB1. His framing of confidence levels, importance/urgency tiers, and encoding resolution (raw vs. compressed vs. keyword) is the conceptual foundation of Jeli's `IngestionClassifier`. Jeli is designed to layer *on top of* OB1 as a security extension, not to replace it.
+
+### Andrej Karpathy — [LLM OS / Memory Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
+Karpathy's framing of LLMs as operating systems with distinct memory tiers (in-context, external KV, vector stores, database) directly informed Jeli's memory type taxonomy (Preference, Identity, Episodic, Semantic, Procedural, Transient) and the four-layer system stack design.
+
+### mem0 / MemGPT / Letta
+[mem0](https://github.com/mem-0/mem0) and [Letta](https://letta.com) (formerly MemGPT) demonstrated stateful agent memory APIs and the pattern of separating agent-loop from memory storage. Jeli's MCP interface design and trust-scored write model are informed by their work.
+
+### Graphiti
+[Graphiti](https://github.com/getzep/graphiti) demonstrated temporal graph memory for AI agents — the idea that facts have a `valid_from`/`valid_until` lifecycle rather than simple overwrite. This directly maps to Jeli's temporal invalidation model.
+
+### Cognee
+[Cognee](https://github.com/topoteretes/cognee) demonstrated a poly-store control plane (graph + vector + relational) as a memory orchestration layer. Cognee is a candidate integration for Jeli's Storage Layer.
+
+---
 
 ## License
 

@@ -1,11 +1,10 @@
 """Inbox dataclasses and enums — no DB logic."""
 
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Optional
+from enum import StrEnum
 
 
-class InboxStatus(str, Enum):
+class InboxStatus(StrEnum):
     PENDING = "pending"
     PROCESSING = "processing"
     APPROVED = "approved"
@@ -14,21 +13,21 @@ class InboxStatus(str, Enum):
     REJECTED = "rejected"
 
 
-class Durability(str, Enum):
+class Durability(StrEnum):
     TRANSIENT = "transient"
     SESSION = "session"
     DURABLE = "durable"
     PERMANENT = "permanent"
 
 
-class Urgency(str, Enum):
+class Urgency(StrEnum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
 
 
-class Encoding(str, Enum):
+class Encoding(StrEnum):
     RAW = "raw"
     SUMMARY = "summary"
     KEYWORDS = "keywords"
@@ -44,14 +43,14 @@ class ClassifierDecision:
     urgency: Urgency
     durability: Durability
     encoding: Encoding
-    suggested_type: Optional[str]
+    suggested_type: str | None
     suggested_trust: float
     keywords: list[str] = field(default_factory=list)
     entities: dict = field(default_factory=dict)
     requires_review: bool = False
-    review_reason: Optional[str] = None
-    near_duplicate_of: Optional[str] = None
-    duplicate_distance: Optional[float] = None
-    merge_strategy: Optional[str] = None
-    rejection_reason: Optional[str] = None
+    review_reason: str | None = None
+    near_duplicate_of: str | None = None
+    duplicate_distance: float | None = None
+    merge_strategy: str | None = None
+    rejection_reason: str | None = None
     enrichment_log: dict = field(default_factory=dict)

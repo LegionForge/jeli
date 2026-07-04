@@ -8,7 +8,6 @@ import hashlib
 import json
 import logging
 import re
-from typing import Optional
 
 from ..database.pool import AsyncPostgresPool
 from ..embedding.provider import EmbeddingProvider
@@ -101,7 +100,7 @@ class IngestionClassifier:
         # Routing decision.
         if dup_dist is not None and dup_dist < self.dedup_reject:
             status = InboxStatus.REJECTED
-            rejection_reason: Optional[str] = "exact duplicate"
+            rejection_reason: str | None = "exact duplicate"
         elif dup_dist is not None and dup_dist < self.dedup_merge:
             status = InboxStatus.MERGED
             rejection_reason = None
@@ -162,10 +161,10 @@ class IngestionClassifier:
 
     def _correct_type(self, content: str, caller_type: str, log: dict) -> str:
         if caller_type == "episodic" and _PREFERENCE_RE.search(content):
-            log["type_corrected"] = f"episodic -> preference (preference pattern)"
+            log["type_corrected"] = "episodic -> preference (preference pattern)"
             return "preference"
         if caller_type == "semantic" and _FIRST_PERSON_RE.search(content):
-            log["type_corrected"] = f"semantic -> identity (first-person pattern)"
+            log["type_corrected"] = "semantic -> identity (first-person pattern)"
             return "identity"
         return caller_type
 
@@ -209,7 +208,7 @@ class IngestionClassifier:
 
     async def _check_dedup(
         self, content: str
-    ) -> tuple[Optional[str], Optional[float], Optional[str], bool, Optional[str]]:
+    ) -> tuple[str | None, float | None, str | None, bool, str | None]:
         """Return (dup_id, distance, merge_strategy, requires_review, review_reason)."""
         try:
             embedding = await self.embedder.embed(content)
