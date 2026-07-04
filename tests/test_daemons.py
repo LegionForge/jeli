@@ -292,8 +292,11 @@ async def test_runner_run_forever_creates_tasks_and_cancels():
     db = _db()
     db.pool = MagicMock()  # non-None so workers attempt to start
 
+    embedder = MagicMock()
+    embedder.embed = AsyncMock(return_value=MagicMock())  # health check passes
+
     runner = DaemonRunner(
-        db=db, embedder=MagicMock(),
+        db=db, embedder=embedder,
         memory_tools=_memory_tools(), settings=_settings(),
         runner_id="test-forever",
     )
