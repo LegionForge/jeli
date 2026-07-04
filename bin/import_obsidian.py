@@ -28,8 +28,28 @@ from jeli_scoped_mcp.inbox.worker import InboxWorker
 from jeli_scoped_mcp.server.mcp_server import ScopedMCPServer
 from jeli_scoped_mcp.tools.memory_tools import MemoryTools
 
+# ── content class inference ───────────────────────────────────────────────────
+
+_SECURITY_DOC_KEYWORDS = frozenset(
+    "security threat attack defense exploit inject vulnerability cve pentest "
+    "adversarial poison jailbreak bypass override lessons-security audit".split()
+)
+_CODE_SAMPLE_EXTENSIONS = frozenset(".py .js .ts .sh .sql .go .rs".split())
+
+
+def _infer_content_class(rel_path: str) -> str:
+    """Derive content_class from vault-relative path for two-axis trust logic."""
+    p = rel_path.lower()
+    if any(kw in p for kw in _SECURITY_DOC_KEYWORDS):
+        return "security-doc"
+    if any(p.endswith(ext) for ext in _CODE_SAMPLE_EXTENSIONS):
+        return "code-sample"
+    return "general"
+
+
 # ── vault file manifest ───────────────────────────────────────────────────────
 # Each entry: (vault-relative path, memory_type, trust_score)
+# content_class is derived automatically by _infer_content_class().
 # Adjust paths to match your vault structure.
 MANIFEST = [
     # Identity & user profile — highest trust, near-permanent
@@ -136,10 +156,12 @@ async def run(vault_root: Path, dry_run: bool, process: bool):
         print(f"\n{rel_path}  [{mem_type}, trust={trust}]")
         print(f"  {len(chunks)} chunk(s)")
 
+        content_class = _infer_content_class(rel_path)
+
         for i, chunk in enumerate(chunks):
             preview = chunk[:80].replace("\n", " ")
             if dry_run:
-                print(f"  [{i+1}] DRY-RUN: {preview}...")
+                print(f"  [{i+1}] DRY-RUN [{content_class}]: {preview}...")
                 continue
 
             result = await server.dispatch(
@@ -148,23 +170,24 @@ async def run(vault_root: Path, dry_run: bool, process: bool):
                     "content": chunk,
                     "memory_type": mem_type,
                     "trust_score": trust,
+                    "content_class": content_class,
                     "session_id": f"obsidian-import:{rel_path}",
                     "metadata": {"source_path": rel_path, "chunk_index": i},
                 },
             )
-            print(f"  [{i+1}] queued → {result.get('inbox_id', '?')[:8]}...")
+            print(f"  [{i+1}] queued [{content_class}] → {result.get('inbox_id', '?')[:8]}...")
             total_queued += 1
 
-    print(f"\n── summary ──────────────────────────────────────────────────")
+    print("\n── summary ──────────────────────────────────────────────────")
     if dry_run:
-        print(f"  dry-run complete — no items submitted")
+        print("  dry-run complete — no items submitted")
         print(f"  files found: {len(MANIFEST) - total_skipped}/{len(MANIFEST)}")
     else:
         print(f"  queued: {total_queued} chunks")
         print(f"  skipped (file not found): {total_skipped}")
 
     if process and not dry_run and total_queued > 0:
-        print(f"\n── processing inbox ─────────────────────────────────────────")
+        print("\n── processing inbox ─────────────────────────────────────────")
         classifier = IngestionClassifier(
             embedder=embedder,
             db=db,
@@ -190,12 +213,12 @@ async def run(vault_root: Path, dry_run: bool, process: bool):
             "SELECT status, COUNT(*) AS cnt FROM memory_inbox "
             "WHERE session_id LIKE 'obsidian-import:%' GROUP BY status ORDER BY status"
         )
-        print(f"\n── inbox results ────────────────────────────────────────────")
+        print("\n── inbox results ────────────────────────────────────────────")
         for r in rows:
             print(f"  {r['status']:12s}  {r['cnt']}")
 
         chain = await memory_tools.verify_chain()
-        print(f"\n── chain integrity ──────────────────────────────────────────")
+        print("\n── chain integrity ──────────────────────────────────────────")
         print(f"  valid:   {chain['chain_valid']}")
         print(f"  records: {chain['records_checked']}")
 

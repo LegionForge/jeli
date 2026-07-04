@@ -177,8 +177,13 @@ class ScopedMCPServer:
         """Route one tool call to MemoryTools with the server-side actor."""
         actor = self.settings.agent_actor
         if name == "capture_memory":
+            # content_class may be a top-level arg or nested inside metadata.
+            content_class = arguments.get(
+                "content_class",
+                (arguments.get("metadata") or {}).get("content_class", "general"),
+            )
             if self.settings.inbox_enabled:
-                return await self._submit_to_inbox(arguments, actor)
+                return await self._submit_to_inbox(arguments, actor, content_class)
             return await self.tools.capture_memory(
                 content=arguments["content"],
                 memory_type=arguments["memory_type"],
@@ -187,6 +192,7 @@ class ScopedMCPServer:
                 source_agent=actor,
                 session_id=arguments.get("session_id"),
                 metadata=arguments.get("metadata"),
+                content_class=content_class,
             )
         if name == "search_memory":
             return await self.tools.search_memory(
@@ -214,18 +220,22 @@ class ScopedMCPServer:
             )
         raise MemoryToolError(f"unknown tool: {name}")
 
-    async def _submit_to_inbox(self, arguments: dict, actor: str) -> dict:
+    async def _submit_to_inbox(
+        self, arguments: dict, actor: str, content_class: str = "general"
+    ) -> dict:
         """Write to inbox and return immediately — non-blocking."""
         content = arguments["content"]
         if not content or not content.strip():
             raise MemoryToolError("content must be non-empty")
 
+        source_metadata = arguments.get("metadata") or None
+
         row = await self.db.fetchrow(
             """
             INSERT INTO memory_inbox (
                 content, content_hash, source_agent, session_id,
-                caller_trust, caller_type
-            ) VALUES ($1, $2, $3, $4, $5, $6)
+                caller_trust, caller_type, content_class, source_metadata
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
             RETURNING id, submitted_at
             """,
             content,
@@ -234,6 +244,8 @@ class ScopedMCPServer:
             arguments.get("session_id"),
             float(arguments["trust_score"]),
             arguments["memory_type"],
+            content_class,
+            json.dumps(source_metadata) if source_metadata else None,
         )
         if row is None:
             raise MemoryToolError("inbox insert failed")
