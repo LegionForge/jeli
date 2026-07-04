@@ -18,6 +18,7 @@ from typing import Any
 from ..config import Settings
 from ..database.pool import AsyncPostgresPool
 from ..embedding.provider import EmbeddingProvider
+from ..reranker.provider import RerankerProvider
 from ..tools.memory_tools import MemoryToolError, MemoryTools
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "default": "semantic",
                 },
                 "limit": {"type": "integer", "default": 10},
+                "rerank": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "Re-rank results using LLM relevance scoring (slower but "
+                        "more accurate). Only applies to mode=semantic."
+                    ),
+                },
             },
             "required": ["query"],
         },
@@ -117,11 +126,13 @@ class ScopedMCPServer:
         self.db = db
         self.embedder = embedder
         self.settings = settings
+        self.reranker = RerankerProvider.from_settings(settings)
         self.tools = MemoryTools(
             db=db,
             embedder=embedder,
             chain_key=settings.chain_key,
             key_id=settings.chain_key_id,
+            reranker=self.reranker,
         )
 
     async def dispatch(self, name: str, arguments: dict) -> dict | list:
@@ -145,6 +156,7 @@ class ScopedMCPServer:
                 actor=actor,
                 mode=arguments.get("mode", "semantic"),
                 limit=arguments.get("limit", 10),
+                rerank=arguments.get("rerank", False),
             )
         if name == "audit_trail":
             return await self.tools.audit_trail(memory_id=arguments["memory_id"], actor=actor)

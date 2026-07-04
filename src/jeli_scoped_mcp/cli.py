@@ -49,8 +49,9 @@ async def _run_state_op(settings: Settings, args) -> dict:
 
 
 async def _run_daemon_start(settings: Settings) -> None:
-    from .embedding.provider import EmbeddingProvider
     from .daemons.runner import DaemonRunner
+    from .embedding.provider import EmbeddingProvider
+    from .reranker.provider import RerankerProvider
 
     db = AsyncPostgresPool(
         db_url=settings.db_url,
@@ -59,8 +60,10 @@ async def _run_daemon_start(settings: Settings) -> None:
     )
     await db.connect()
     embedder = EmbeddingProvider.from_settings(settings)
+    reranker = RerankerProvider.from_settings(settings)
     tools = MemoryTools(
-        db=db, embedder=embedder, chain_key=settings.chain_key, key_id=settings.chain_key_id
+        db=db, embedder=embedder, chain_key=settings.chain_key,
+        key_id=settings.chain_key_id, reranker=reranker,
     )
     runner = DaemonRunner(db=db, embedder=embedder, memory_tools=tools, settings=settings)
     print(f"starting daemons (inbox_workers={settings.inbox_worker_concurrency}, "
@@ -69,15 +72,18 @@ async def _run_daemon_start(settings: Settings) -> None:
 
 
 async def _run_daemon_once(settings: Settings, which: str) -> dict:
-    from .embedding.provider import EmbeddingProvider
     from .daemons.runner import DaemonRunner
+    from .embedding.provider import EmbeddingProvider
+    from .reranker.provider import RerankerProvider
 
     db = AsyncPostgresPool(db_url=settings.db_url, min_size=1, max_size=4)
     await db.connect()
     try:
         embedder = EmbeddingProvider.from_settings(settings)
+        reranker = RerankerProvider.from_settings(settings)
         tools = MemoryTools(
-            db=db, embedder=embedder, chain_key=settings.chain_key, key_id=settings.chain_key_id
+            db=db, embedder=embedder, chain_key=settings.chain_key,
+            key_id=settings.chain_key_id, reranker=reranker,
         )
         runner = DaemonRunner(db=db, embedder=embedder, memory_tools=tools, settings=settings)
         if which == "insights":

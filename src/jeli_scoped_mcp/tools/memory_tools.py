@@ -23,6 +23,7 @@ from ..core.hash_chain import (
 from ..core.trust_score import TrustScorer
 from ..database.pool import AsyncPostgresPool
 from ..embedding.provider import EmbeddingProvider
+from ..reranker.provider import NullReranker, RerankerProvider
 from ..security import InjectionDefense
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ class MemoryTools:
         chain_key: str,
         key_id: str = "k1",
         key_registry: dict[str, str] | None = None,
+        reranker: RerankerProvider | None = None,
     ):
         self.db = db
         self.embedder = embedder
@@ -78,6 +80,7 @@ class MemoryTools:
         # signing key so rotation is per-record, never all-or-nothing.
         self.key_registry = dict(key_registry or {})
         self.key_registry.setdefault(key_id, chain_key)
+        self.reranker: RerankerProvider = reranker or NullReranker()
 
     # ── capture_memory ───────────────────────────────────────────────────────
 
@@ -224,9 +227,10 @@ class MemoryTools:
         actor: str,
         mode: str = "fts",
         limit: int = 10,
+        rerank: bool = False,
     ) -> list[dict]:
         """Read-only search over currently-valid memories, ranked by trust
-        then recency. Phase 1 supports fts (substring) mode only."""
+        then recency. Set rerank=True to apply LLM re-ranking on semantic results."""
         if not query or not query.strip():
             raise MemoryToolError("query must be non-empty")
         if mode not in SEARCH_MODES:
@@ -235,6 +239,12 @@ class MemoryTools:
                 "(semantic search lands with the pgvector migration)"
             )
         limit = max(1, min(int(limit), 50))
+
+        # When re-ranking, fetch a larger candidate pool to score from.
+        candidate_limit = limit
+        if rerank and mode == "semantic":
+            raw_limit = getattr(self.reranker, "candidate_limit", limit * 2)
+            candidate_limit = max(limit, min(int(raw_limit), 50))
 
         if mode == "semantic":
             if self.embedder is None:
@@ -259,7 +269,7 @@ class MemoryTools:
                 LIMIT $2
                 """,
                 json.dumps(q_embedding.vector),
-                limit,
+                candidate_limit,
             )
         else:
             rows = await self.db.fetchall(
@@ -302,8 +312,13 @@ class MemoryTools:
                 """,
                 r["id"],
                 actor,
-                json.dumps({"query": query[:200], "mode": mode}),
+                json.dumps({"query": query[:200], "mode": mode, "rerank": rerank}),
             )
+
+        if rerank and mode == "semantic" and results:
+            results = await self.reranker.rerank(query, results)
+            results = results[:limit]
+
         return results
 
     # ── audit_trail ──────────────────────────────────────────────────────────

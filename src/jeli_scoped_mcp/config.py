@@ -48,6 +48,21 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("OLLAMA_MODEL", "scoped_mcp_ollama_model"),
     )
 
+    # Re-ranking via LiteLLM proxy
+    litellm_base_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("LITELLM_BASE_URL", "scoped_mcp_litellm_base_url"),
+    )
+    litellm_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("LITELLM_API_KEY", "scoped_mcp_litellm_api_key"),
+    )
+    reranker_enabled: bool = Field(default=False)
+    reranker_model: str = Field(default="local-chat")
+    reranker_timeout: float = Field(default=30.0)
+    reranker_candidate_limit: int = Field(default=20)
+    reranker_top_k: int = Field(default=10)
+
     # Inbox / Bouncer
     inbox_enabled: bool = Field(default=True)
     inbox_poll_interval: float = Field(default=5.0)
