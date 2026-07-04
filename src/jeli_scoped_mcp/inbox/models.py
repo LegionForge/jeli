@@ -54,3 +54,4 @@ class ClassifierDecision:
     merge_strategy: str | None = None
     rejection_reason: str | None = None
     enrichment_log: dict = field(default_factory=dict)
+    content_class: str = "general"

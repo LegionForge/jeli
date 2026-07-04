@@ -2,6 +2,19 @@
 
 import hmac
 import re
+from typing import Literal
+
+# Recognised content categories for the two-axis trust model.
+ContentClass = Literal["general", "security-doc", "code-sample", "external-untrusted"]
+
+# Source trust threshold above which authoritative content classes bypass the
+# injection trust cap (pattern is still flagged and logged, just not penalised).
+AUTHORITATIVE_SOURCE_TRUST = 0.9
+
+# Content classes that, when combined with authoritative source trust, override
+# the injection cap.  "security-doc" is the primary use-case: JP's own session
+# notes describing attacks look injection-like but are ground-truth.
+AUTHORITATIVE_CONTENT_CLASSES: frozenset[str] = frozenset({"security-doc"})
 
 
 class APIKeyValidator:
@@ -105,21 +118,38 @@ class InjectionDefense:
         # the sql search mode; fts mode never reaches raw SQL.
 
     @classmethod
-    def sanitize_content(cls, content: str, max_length: int = 10000) -> tuple[str, bool]:
-        """
-        Sanitize content for capture_memory.
+    def sanitize_content(
+        cls,
+        content: str,
+        max_length: int = 10000,
+        source_trust: float = 0.0,
+        content_class: str = "general",
+    ) -> tuple[str, bool, str | None]:
+        """Sanitize content for capture_memory.
 
-        Returns: (sanitized_content, is_flagged)
-        - Trim to max_length
-        - Flag potential injections (don't block, just flag for low trust)
+        Returns: (sanitized_content, is_flagged, trust_override_reason)
+
+        Two-axis trust logic:
+        - Unknown/low-trust sources with injection patterns → cap trust at
+          FLAGGED_TRUST_CEILING (0.3) in the caller; override_reason is None.
+        - Authoritative source (trust >= 0.9) with a recognised content class
+          (security-doc) → preserve trust; override_reason explains why the cap
+          was skipped so the audit trail is unambiguous.
         """
         if len(content) > max_length:
             content = content[:max_length]
 
-        # Check for injection patterns
         is_flagged = cls.is_instruction_like(content)
+        override_reason: str | None = None
 
-        return content, is_flagged
+        if is_flagged and source_trust >= AUTHORITATIVE_SOURCE_TRUST:
+            if content_class in AUTHORITATIVE_CONTENT_CLASSES:
+                override_reason = (
+                    f"authoritative-{content_class}: "
+                    f"source_trust={source_trust:.2f} qualifies for trust preservation"
+                )
+
+        return content, is_flagged, override_reason
 
     @classmethod
     def validate_embedding_dimensions(cls, dimensions: int, model_id: str) -> bool:

@@ -97,6 +97,11 @@ class InboxWorker:
         source_agent = row["source_agent"]
         session_id = row.get("session_id")
         retry_count = row.get("retry_count", 0)
+        content_class: str = row.get("content_class") or "general"
+        source_metadata: dict = {}
+        if row.get("source_metadata"):
+            raw = row["source_metadata"]
+            source_metadata = json.loads(raw) if isinstance(raw, str) else dict(raw)
 
         try:
             decision = await self.classifier.classify(
@@ -117,6 +122,7 @@ class InboxWorker:
                     actor=source_agent,
                     source_agent=source_agent,
                     session_id=session_id,
+                    content_class=content_class,
                     metadata={
                         "inbox_id": inbox_id,
                         "importance": decision.importance,
@@ -124,6 +130,8 @@ class InboxWorker:
                         "durability": decision.durability.value,
                         "entities": decision.entities,
                         "keywords": decision.keywords,
+                        # Preserve original caller metadata (source_path etc.)
+                        **source_metadata,
                         **({"amended_from": amended_from} if amended_from else {}),
                     },
                 )
