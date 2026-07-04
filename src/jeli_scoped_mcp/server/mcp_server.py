@@ -218,9 +218,23 @@ class ScopedMCPServer:
                 result = await self.dispatch(name, arguments or {})
             except MemoryToolError as e:
                 result = {"error": str(e)}
-            except Exception:
+            except Exception as exc:
+                exc_type = type(exc).__name__
+                exc_msg = str(exc)
                 logger.exception("tool %s failed", name)
-                result = {"error": "internal error (see server log)"}
+                # Surface enough detail for the calling agent to self-correct,
+                # without leaking internal credentials or stack traces.
+                result = {
+                    "error": "internal error",
+                    "detail": f"{exc_type}: {exc_msg[:300]}",
+                    "tool": name,
+                    "hint": (
+                        "If this is a DB error, the migration may not be applied. "
+                        "Run: alembic upgrade head"
+                        if "does not exist" in exc_msg or "UndefinedTable" in exc_type
+                        else "Check server logs for full traceback."
+                    ),
+                }
             return [TextContent(type="text", text=json.dumps(result))]
 
         async with stdio_server() as (read_stream, write_stream):
