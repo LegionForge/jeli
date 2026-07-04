@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.1 — 2026-07-04
 
 ### Added
 - Hash-chained state events (alembic 006): `jeli revise` / `jeli invalidate`
