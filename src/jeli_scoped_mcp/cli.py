@@ -143,6 +143,93 @@ async def _run_inbox_review(settings: Settings, limit: int) -> list:
         await db.close()
 
 
+async def _run_inbox_approve(settings: Settings, inbox_id: str, actor: str) -> dict:
+    """Approve a held inbox item: write directly to memory chain, bypass classifier."""
+    from .embedding.provider import EmbeddingProvider
+
+    db = AsyncPostgresPool(db_url=settings.db_url, min_size=1, max_size=2)
+    await db.connect()
+    try:
+        row = await db.fetchrow(
+            """
+            SELECT id, content, source_agent, session_id, caller_type, caller_trust
+            FROM memory_inbox
+            WHERE id = $1 AND status = 'held'
+            """,
+            inbox_id,
+        )
+        if row is None:
+            raise ValueError(f"inbox item {inbox_id} not found or not in 'held' status")
+
+        embedder = EmbeddingProvider.from_settings(settings)
+        tools = MemoryTools(
+            db=db, embedder=embedder, chain_key=settings.chain_key, key_id=settings.chain_key_id
+        )
+        result = await tools.capture_memory(
+            content=row["content"],
+            memory_type=row["caller_type"],
+            trust_score=float(row["caller_trust"]),
+            actor=actor,
+            source_agent=row["source_agent"],
+            session_id=row["session_id"],
+            metadata={"inbox_id": inbox_id, "approved_by": actor},
+        )
+        await db.execute(
+            """
+            UPDATE memory_inbox
+            SET status = 'approved', promoted_to = $1, processed_at = now()
+            WHERE id = $2
+            """,
+            result["id"],
+            inbox_id,
+        )
+        return {"approved": inbox_id, "promoted_to": result["id"]}
+    finally:
+        await db.close()
+
+
+async def _run_inbox_reject(settings: Settings, inbox_id: str, reason: str) -> dict:
+    """Reject a held inbox item permanently."""
+    db = AsyncPostgresPool(db_url=settings.db_url, min_size=1, max_size=2)
+    await db.connect()
+    try:
+        result = await db.execute(
+            """
+            UPDATE memory_inbox
+            SET status = 'rejected', rejection_reason = $1, processed_at = now()
+            WHERE id = $2 AND status = 'held'
+            """,
+            reason,
+            inbox_id,
+        )
+        if result == "UPDATE 0":
+            raise ValueError(f"inbox item {inbox_id} not found or not in 'held' status")
+        return {"rejected": inbox_id, "reason": reason}
+    finally:
+        await db.close()
+
+
+async def _run_inbox_retry(settings: Settings, inbox_id: str) -> dict:
+    """Push a held inbox item back to pending for reprocessing."""
+    db = AsyncPostgresPool(db_url=settings.db_url, min_size=1, max_size=2)
+    await db.connect()
+    try:
+        result = await db.execute(
+            """
+            UPDATE memory_inbox
+            SET status = 'pending', error = NULL, worker_id = NULL,
+                retry_count = 0, processed_at = NULL
+            WHERE id = $1 AND status = 'held'
+            """,
+            inbox_id,
+        )
+        if result == "UPDATE 0":
+            raise ValueError(f"inbox item {inbox_id} not found or not in 'held' status")
+        return {"retrying": inbox_id}
+    finally:
+        await db.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="jeli", description="Jeli sovereign memory — governance CLI"
@@ -178,6 +265,14 @@ def main(argv: list[str] | None = None) -> int:
     inbox_sub.add_parser("status", help="show counts by status")
     review_p = inbox_sub.add_parser("review", help="list held items for human review")
     review_p.add_argument("--limit", type=int, default=20)
+    approve_p = inbox_sub.add_parser("approve", help="approve a held item (writes to chain)")
+    approve_p.add_argument("inbox_id")
+    approve_p.add_argument("--actor", default="jp")
+    reject_p = inbox_sub.add_parser("reject", help="permanently reject a held item")
+    reject_p.add_argument("inbox_id")
+    reject_p.add_argument("--reason", required=True)
+    retry_p = inbox_sub.add_parser("retry", help="push a held item back to pending")
+    retry_p.add_argument("inbox_id")
 
     args = parser.parse_args(argv)
     settings = Settings()
@@ -237,6 +332,30 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             print(json.dumps(items, indent=2))
             return 0
+        if args.inbox_cmd == "approve":
+            try:
+                result = asyncio.run(_run_inbox_approve(settings, args.inbox_id, args.actor))
+                print(json.dumps(result, indent=2))
+                return 0
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+        if args.inbox_cmd == "reject":
+            try:
+                result = asyncio.run(_run_inbox_reject(settings, args.inbox_id, args.reason))
+                print(json.dumps(result, indent=2))
+                return 0
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+        if args.inbox_cmd == "retry":
+            try:
+                result = asyncio.run(_run_inbox_retry(settings, args.inbox_id))
+                print(json.dumps(result, indent=2))
+                return 0
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
 
     return 2
 

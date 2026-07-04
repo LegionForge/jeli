@@ -29,21 +29,10 @@ Jeli adds cryptographic integrity and governance to memory systems:
 Jeli is built on **three-branch governance** — separation of powers between the agents that propose memories, the store that holds them, and the engine that resolves contradictions. A cryptographically inviolable Constitutional layer sits beneath all three.
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {
-  'background':         '#0d1117',
-  'mainBkg':            '#161b22',
-  'primaryColor':       '#1c2938',
-  'primaryBorderColor': '#30363d',
-  'primaryTextColor':   '#e6edf3',
-  'lineColor':          '#6e7681',
-  'clusterBkg':         '#161b22',
-  'clusterBorder':      '#30363d',
-  'edgeLabelBackground':'#161b22',
-  'titleColor':         '#e6edf3'
-}}}%%
+%%{init: {'theme': 'base', 'themeVariables': {'background': '#0d1117', 'mainBkg': '#161b22', 'primaryColor': '#1c2938', 'primaryBorderColor': '#30363d', 'primaryTextColor': '#e6edf3', 'lineColor': '#6e7681', 'clusterBkg': '#161b22', 'clusterBorder': '#30363d', 'edgeLabelBackground': '#161b22', 'titleColor': '#e6edf3'}}}%%
 
 flowchart TB
-    classDef agent      fill:#0d2137,stroke:#4a90d9,stroke-width:2px,color:#a8d4ff,rx:8
+    classDef agent      fill:#0d2137,stroke:#4a90d9,stroke-width:2px,color:#a8d4ff
     classDef jeliGreen  fill:#0d1f15,stroke:#3fb950,stroke-width:2px,color:#7ee787
     classDef jeliTeal   fill:#0a1e1e,stroke:#39c5cf,stroke-width:2px,color:#79e8ef
     classDef storage    fill:#1f0d2a,stroke:#a371f7,stroke-width:2px,color:#d2a8ff
@@ -51,59 +40,59 @@ flowchart TB
     classDef daemon     fill:#1f160d,stroke:#f0883e,stroke-width:2px,color:#ffa657
     classDef constStyle fill:#0d0d18,stroke:#484f58,stroke-width:2px,stroke-dasharray:6 4,color:#8b949e
 
-    subgraph EXEC["⚡  Executive — Agents"]
+    subgraph EXEC["Executive — Agents"]
         direction LR
-        H(["🤖  Hermes"]):::agent
-        CL(["🧠  Claude / Codex"]):::agent
-        FA(["◎  Future Agents"]):::agent
+        H(["Hermes"]):::agent
+        CL(["Claude / Codex"]):::agent
+        FA(["Future Agents"]):::agent
     end
 
-    subgraph JELI["🛡️  Jeli — Security & Governance Layer"]
+    subgraph JELI["Jeli — Security and Governance Layer"]
         direction TB
 
         subgraph MCP["Scoped MCP Server"]
             direction LR
-            AUTH["🔑  Auth · HMAC · rate-limit"]:::jeliGreen
-            IDEF["🚫  Injection defense · trust cap"]:::jeliGreen
-            TOOLS["🔧  capture_memory · search_memory · audit_trail\n       redact · summarize_session · verify_chain"]:::jeliGreen
+            AUTH["Auth · HMAC · rate-limit"]:::jeliGreen
+            IDEF["Injection defense · trust cap"]:::jeliGreen
+            TOOLS["capture_memory · search_memory · audit_trail · redact · summarize_session · verify_chain"]:::jeliGreen
         end
 
-        subgraph BOUNCER["Ingestion Bouncer  (inspired by OB1)"]
+        subgraph BOUNCER["Ingestion Bouncer"]
             direction LR
-            INBOX["📥  memory_inbox\n       staging table"]:::jeliTeal
-            CLF["⚙️  IngestionClassifier\n       dedup · classify · LLM entity extract"]:::jeliTeal
-            WRK["👷  InboxWorker ×N\n       FOR UPDATE SKIP LOCKED"]:::jeliTeal
+            INBOX["memory_inbox staging"]:::jeliTeal
+            CLF["IngestionClassifier · dedup · classify"]:::jeliTeal
+            WRK["InboxWorker x N  FOR UPDATE SKIP LOCKED"]:::jeliTeal
             INBOX --> CLF --> WRK
         end
 
-        MCP -->|"✅  approved writes"| BOUNCER
+        MCP -->|"approved writes"| BOUNCER
     end
 
-    subgraph LEGIS["📚  Legislative — Storage"]
+    subgraph LEGIS["Legislative — Storage"]
         direction LR
-        PG[("🐘  PostgreSQL 16\n       + pgvector")]:::storage
-        CHAIN["⛓️  memory_entry\n       HMAC-SHA256 hash-chained\n       vector(1024) HNSW index"]:::storage
-        AUDIT["📋  memory_audit_log\n       memory_state_event\n       conflict_queue · daemon_runs"]:::storage
+        PG[("PostgreSQL 16 + pgvector")]:::storage
+        CHAIN["memory_entry · HMAC-SHA256 hash-chained · vector1024 HNSW"]:::storage
+        AUDIT["memory_audit_log · memory_state_event · conflict_queue"]:::storage
     end
 
-    subgraph DAEMONS["⚙️  Background Daemons"]
+    subgraph DAEMONS["Background Daemons"]
         direction LR
-        CRD["⚖️  ConflictResolverDaemon\n       trust-score arbitration\n       precedent logging"]:::judicial
-        INS["💡  InsightsDaemon\n       consolidation · decay"]:::daemon
-        MNT["🧹  MaintenanceDaemon\n       chain compaction"]:::daemon
+        CRD["ConflictResolverDaemon · trust-score arbitration"]:::judicial
+        INS["InsightsDaemon · consolidation · decay"]:::daemon
+        MNT["MaintenanceDaemon · chain compaction"]:::daemon
     end
 
-    CONST[/"🔒  Constitutional Layer  ·  User-signed  ·  Cryptographically Inviolable\n       Data stays local  ·  No PII off-machine  ·  User veto on irreversible actions"/]:::constStyle
+    CONST[/"Constitutional Layer  ·  User-signed  ·  Cryptographically Inviolable  ·  Data stays local  ·  No PII off-machine  ·  User veto on irreversible actions"/]:::constStyle
 
-    EXEC      -->|"stdio / HTTP  ·  MCP calls"| MCP
-    WRK       -->|"⛓️  hash-chained append"|    PG
-    MCP       -->|"search / audit / verify"|    PG
-    PG        -->|"pg_notify  INSERT trigger"|  CRD
-    CRD       -->|"precedent log"|              PG
-    CRD      -.->|"⚠️  unresolvable conflict"| CONST
-    INS      <-->|"read + annotate"|            PG
-    MNT      <-->|"compact + prune"|            PG
-    CONST    -.->|"🔒  inviolable constraints"| MCP
+    EXEC  -->|"stdio / HTTP · MCP calls"| MCP
+    WRK   -->|"hash-chained append"| PG
+    MCP   -->|"search / audit / verify"| PG
+    PG    -->|"pg_notify INSERT trigger"| CRD
+    CRD   -->|"precedent log"| PG
+    CRD   -.->|"unresolvable conflict"| CONST
+    INS   <-->|"read + annotate"| PG
+    MNT   <-->|"compact + prune"| PG
+    CONST -.->|"inviolable constraints"| MCP
 
     style EXEC    fill:#0d1525,stroke:#4a90d9,stroke-width:2px,color:#e6edf3
     style JELI    fill:#0a130d,stroke:#3fb950,stroke-width:2px,color:#e6edf3
@@ -150,18 +139,7 @@ Jeli is designed to work **alongside** [OB1](https://github.com/NateBJones-Proje
 The diagram below shows the integration points — where each system's responsibility begins and ends, and how they share a PostgreSQL cluster without interfering with each other.
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {
-  'background':         '#0d1117',
-  'mainBkg':            '#161b22',
-  'primaryColor':       '#1c2938',
-  'primaryBorderColor': '#30363d',
-  'primaryTextColor':   '#e6edf3',
-  'lineColor':          '#6e7681',
-  'clusterBkg':         '#161b22',
-  'clusterBorder':      '#30363d',
-  'edgeLabelBackground':'#161b22',
-  'titleColor':         '#e6edf3'
-}}}%%
+%%{init: {'theme': 'base', 'themeVariables': {'background': '#0d1117', 'mainBkg': '#161b22', 'primaryColor': '#1c2938', 'primaryBorderColor': '#30363d', 'primaryTextColor': '#e6edf3', 'lineColor': '#6e7681', 'clusterBkg': '#161b22', 'clusterBorder': '#30363d', 'edgeLabelBackground': '#161b22', 'titleColor': '#e6edf3'}}}%%
 
 flowchart TB
     classDef agent      fill:#0d2137,stroke:#4a90d9,stroke-width:2px,color:#a8d4ff
@@ -175,64 +153,64 @@ flowchart TB
     classDef constStyle fill:#0d0d18,stroke:#484f58,stroke-width:2px,stroke-dasharray:6 4,color:#8b949e
     classDef future     fill:#0d1117,stroke:#484f58,stroke-width:1px,stroke-dasharray:4 4,color:#6e7681
 
-    subgraph AGENTS["⚡  Agents"]
+    subgraph AGENTS["Agents"]
         direction LR
-        H(["🤖  Hermes"]):::agent
-        CL(["🧠  Claude"]):::agent
-        CD(["💻  Codex"]):::agent
-        OTH(["◎  Other MCP Clients"]):::agent
+        H(["Hermes"]):::agent
+        CL(["Claude"]):::agent
+        CD(["Codex"]):::agent
+        OTH(["Other MCP Clients"]):::agent
     end
 
-    subgraph JELI_GATE["🛡️  Jeli — Write Gateway"]
+    subgraph JELI_GATE["Jeli — Write Gateway"]
         direction TB
-        SMCP["🔑  Scoped MCP Server\n       Auth · HMAC · injection defense\n       capture_memory · redact\n       summarize_session · audit_trail · verify_chain"]:::jeliNode
-        BNCR["📥  Ingestion Bouncer\n       memory_inbox staging\n       IngestionClassifier\n       InboxWorker ×N parallel"]:::jeliTeal
-        SMCP -->|"✅  approved"| BNCR
+        SMCP["Scoped MCP Server · Auth · HMAC · injection defense · capture_memory · redact · summarize_session · audit_trail · verify_chain"]:::jeliNode
+        BNCR["Ingestion Bouncer · memory_inbox staging · IngestionClassifier · InboxWorker x N parallel"]:::jeliTeal
+        SMCP -->|"approved"| BNCR
     end
 
-    subgraph OB1_GATE["🔍  OB1 — Read Gateway  (port 8100)"]
-        OB1MCP["🧩  OB1 MCP Server\n       Multi-source ingestion\n       Semantic search + retrieval\n       Multi-AI access\n       Conversational memory API"]:::ob1Node
+    subgraph OB1_GATE["OB1 — Read Gateway  port 8100"]
+        OB1MCP["OB1 MCP Server · Multi-source ingestion · Semantic search + retrieval · Multi-AI access · Conversational memory API"]:::ob1Node
     end
 
-    subgraph SHARED_DB["🐘  Shared PostgreSQL Cluster"]
+    subgraph SHARED_DB["Shared PostgreSQL Cluster"]
         direction LR
 
-        subgraph JELI_SCHEMA["Jeli Schema  (non-destructive add)"]
-            JT[("⛓️  memory_entry  ← hash-chained\n       memory_inbox  ← staging\n       memory_audit_log\n       memory_state_event\n       conflict_queue")]:::dbJeli
+        subgraph JELI_SCHEMA["Jeli Schema  non-destructive add"]
+            JT[("memory_entry hash-chained · memory_inbox staging · memory_audit_log · memory_state_event · conflict_queue")]:::dbJeli
         end
 
-        subgraph OB1_SCHEMA["OB1 Schema  (untouched by Jeli)"]
-            OT[("📦  ob1_memories\n       ob1_embeddings\n       ob1_conversations\n       ob1_sources")]:::dbOb1
+        subgraph OB1_SCHEMA["OB1 Schema  untouched by Jeli"]
+            OT[("ob1_memories · ob1_embeddings · ob1_conversations · ob1_sources")]:::dbOb1
         end
     end
 
-    subgraph JELI_DAEMONS["⚙️  Jeli Background Daemons"]
+    subgraph JELI_DAEMONS["Jeli Background Daemons"]
         direction LR
-        CRD["⚖️  ConflictResolverDaemon\n       Judicial arbitration\n       precedent log"]:::judicial
-        INS["💡  InsightsDaemon\n       consolidation · decay"]:::daemon
+        CRD["ConflictResolverDaemon · Judicial arbitration · precedent log"]:::judicial
+        INS["InsightsDaemon · consolidation · decay"]:::daemon
     end
 
-    CONST[/"🔒  Constitutional Layer  ·  User-signed  ·  Cryptographically Inviolable\n       Data stays local  ·  No PII off-machine  ·  User veto on irreversible actions"/]:::constStyle
+    CONST[/"Constitutional Layer  ·  User-signed  ·  Cryptographically Inviolable  ·  Data stays local  ·  No PII off-machine  ·  User veto on irreversible actions"/]:::constStyle
 
-    FUTURE[/"🔮  Future: OB1 writes route through\n       Jeli Bouncer for full provenance coverage"/]:::future
+    FUTURE[/"Future: OB1 writes route through Jeli Bouncer for full provenance coverage"/]:::future
 
-    AGENTS      -->|"✍️  write · audit · verify"| JELI_GATE
-    AGENTS      -->|"🔎  search · recall"| OB1_GATE
-    BNCR        -->|"⛓️  hash-chained append"| JT
-    OB1MCP     <-->|"reads + ingests"| OT
+    AGENTS     -->|"write · audit · verify"| JELI_GATE
+    AGENTS     -->|"search · recall"| OB1_GATE
+    BNCR       -->|"hash-chained append"| JT
+    OB1MCP    <-->|"reads + ingests"| OT
     JT         -.->|"pg_notify conflict trigger"| CRD
-    CRD & INS  <-->|"operates on"| JT
-    CRD        -.->|"⚠️  unresolvable"| CONST
-    CONST      -.->|"🔒  inviolable bounds"| SMCP
+    CRD & INS <-->|"operates on"| JT
+    CRD        -.->|"unresolvable conflict"| CONST
+    CONST      -.->|"inviolable bounds"| SMCP
     OT         -.->|"integrity layer"| FUTURE
     FUTURE     -.->|"routes through"| BNCR
 
-    style AGENTS      fill:#0d1525,stroke:#4a90d9,stroke-width:2px,color:#e6edf3
-    style JELI_GATE   fill:#0a130d,stroke:#3fb950,stroke-width:2px,color:#e6edf3
-    style OB1_GATE    fill:#110d1e,stroke:#a371f7,stroke-width:2px,color:#e6edf3
-    style SHARED_DB   fill:#0f0f1a,stroke:#484f58,stroke-width:2px,color:#e6edf3
-    style JELI_SCHEMA fill:#150d22,stroke:#a371f7,stroke-width:1px,color:#d2a8ff
-    style OB1_SCHEMA  fill:#0d1525,stroke:#58a6ff,stroke-width:1px,color:#79c0ff
+    style AGENTS       fill:#0d1525,stroke:#4a90d9,stroke-width:2px,color:#e6edf3
+    style JELI_GATE    fill:#0a130d,stroke:#3fb950,stroke-width:2px,color:#e6edf3
+    style OB1_GATE     fill:#110d1e,stroke:#a371f7,stroke-width:2px,color:#e6edf3
+    style SHARED_DB    fill:#0f0f1a,stroke:#484f58,stroke-width:2px,color:#e6edf3
+    style JELI_SCHEMA  fill:#150d22,stroke:#a371f7,stroke-width:1px,color:#d2a8ff
+    style OB1_SCHEMA   fill:#0d1525,stroke:#58a6ff,stroke-width:1px,color:#79c0ff
     style JELI_DAEMONS fill:#1a1208,stroke:#e3b341,stroke-width:2px,color:#e6edf3
 ```
 
