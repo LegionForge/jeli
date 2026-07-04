@@ -17,6 +17,23 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Create roles if running in a fresh environment (e.g. CI) where they
+    # were not created by the out-of-band database setup script.
+    op.execute("""
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'jeli_admin') THEN
+                CREATE ROLE jeli_admin;
+            END IF;
+        END $$
+    """)
+    op.execute("""
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'jeli_app') THEN
+                CREATE ROLE jeli_app WITH LOGIN;
+            END IF;
+        END $$
+    """)
+
     # Future objects: any table/sequence/function that jeli_admin creates in
     # public schema will automatically be accessible to jeli_app.
     op.execute("""
