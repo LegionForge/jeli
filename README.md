@@ -1,6 +1,6 @@
-# Jeli
+# Jeli - an optional security add on for Nate B. Jones' [Open Brain](https://github.com/NateBJones-Projects/OB1)
 
-> A security and governance layer for personal memory systems. Cryptographically verifiable. Poison-proof. Sovereign.
+> A security and governance layer for personal memory systems. Cryptographically verifiable. Poison-resistant. Sovereign.
 
 ## The Problem
 
