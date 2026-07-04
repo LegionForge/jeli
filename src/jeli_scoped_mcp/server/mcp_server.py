@@ -106,6 +106,44 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         ),
         "inputSchema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "summarize_session",
+        "description": (
+            "Store an end-of-session summary as an episodic memory (trust 0.9). "
+            "Call this at session end with a written summary of what happened; "
+            "the Insights daemon uses session-summary flags during consolidation."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "The session summary text to store",
+                },
+                "session_id": {"type": "string"},
+            },
+            "required": ["content"],
+        },
+    },
+    {
+        "name": "redact",
+        "description": (
+            "Redact a memory's content. The hash-chain record and audit trail "
+            "are preserved so the redaction itself is auditable. The record is "
+            "marked invalid and will not appear in search results."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "string"},
+                "reason": {
+                    "type": "string",
+                    "description": "Why this memory is being redacted",
+                },
+            },
+            "required": ["memory_id", "reason"],
+        },
+    },
 ]
 
 
@@ -162,6 +200,18 @@ class ScopedMCPServer:
             return await self.tools.audit_trail(memory_id=arguments["memory_id"], actor=actor)
         if name == "verify_chain":
             return await self.tools.verify_chain()
+        if name == "summarize_session":
+            return await self.tools.summarize_session(
+                content=arguments["content"],
+                actor=actor,
+                session_id=arguments.get("session_id"),
+            )
+        if name == "redact":
+            return await self.tools.redact(
+                memory_id=arguments["memory_id"],
+                reason=arguments["reason"],
+                actor=actor,
+            )
         raise MemoryToolError(f"unknown tool: {name}")
 
     async def _submit_to_inbox(self, arguments: dict, actor: str) -> dict:

@@ -321,6 +321,110 @@ class MemoryTools:
 
         return results
 
+    # ── summarize_session ────────────────────────────────────────────────────
+
+    async def summarize_session(
+        self,
+        content: str,
+        actor: str,
+        session_id: str | None = None,
+    ) -> dict:
+        """Store a session summary as an episodic memory.
+
+        Designed for end-of-session consolidation: the caller (agent or user)
+        passes a written summary of the session; Jeli stores it as a
+        first-class episodic memory with user-confirmed trust (0.9) and a
+        metadata flag so the insights daemon can treat summaries specially
+        during consolidation passes.
+        """
+        result = await self.capture_memory(
+            content=content,
+            memory_type="episodic",
+            trust_score=0.9,
+            actor=actor,
+            source_agent=actor,
+            session_id=session_id,
+            metadata={"is_session_summary": True},
+        )
+        logger.info(
+            "summarize_session: stored id=%s session=%s actor=%s",
+            result["id"],
+            session_id,
+            actor,
+        )
+        return {
+            "stored": True,
+            "memory_id": result["id"],
+            "trust_score": result["trust_score"],
+            "record_hash": result["record_hash"],
+        }
+
+    # ── redact ───────────────────────────────────────────────────────────────
+
+    async def redact(
+        self,
+        memory_id: str,
+        reason: str,
+        actor: str,
+    ) -> dict:
+        """Redact a memory's content while preserving the hash-chain record.
+
+        The original record_hash is preserved as evidence in the audit log so
+        the redaction event itself is auditable. Content becomes a redaction
+        notice. The record is marked invalid (valid_until = now) so it no
+        longer appears in normal search results but remains in verify_chain
+        and audit_trail.
+        """
+        if not reason or not reason.strip():
+            raise MemoryToolError("reason is required for redaction")
+
+        row = await self.db.fetchrow(
+            "SELECT id, record_hash, valid_until FROM memory_entry WHERE id = $1",
+            memory_id,
+        )
+        if row is None:
+            raise MemoryToolError(f"memory {memory_id!r} not found")
+
+        redacted_marker = f"[REDACTED by {actor}: {reason[:200].strip()}]"
+
+        async with self.db.locked_transaction(CHAIN_WRITE_LOCK) as conn:
+            await conn.execute(
+                """
+                UPDATE memory_entry SET
+                    content     = $1,
+                    valid_until = COALESCE(valid_until, now()),
+                    metadata    = jsonb_set(
+                                    COALESCE(metadata, '{}'::jsonb),
+                                    '{redacted}', 'true'::jsonb
+                                  )
+                WHERE id = $2
+                """,
+                redacted_marker,
+                memory_id,
+            )
+            await conn.execute(
+                """
+                INSERT INTO memory_audit_log (memory_id, action, actor, details)
+                VALUES ($1, 'redacted', $2, $3::jsonb)
+                """,
+                memory_id,
+                actor,
+                json.dumps(
+                    {
+                        "reason": reason,
+                        "original_hash": row["record_hash"],
+                        "was_valid": row["valid_until"] is None,
+                    }
+                ),
+            )
+
+        logger.info("redact: id=%s actor=%s reason=%s", memory_id, actor, reason[:80])
+        return {
+            "memory_id": memory_id,
+            "redacted": True,
+            "original_hash_preserved": row["record_hash"],
+        }
+
     # ── audit_trail ──────────────────────────────────────────────────────────
 
     async def audit_trail(self, memory_id: str, actor: str) -> dict:

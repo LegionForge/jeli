@@ -196,6 +196,103 @@ async def test_entities_tools_extracted():
     assert "postgres" in d.entities.get("tools", []) or "postgresql" in d.entities.get("tools", [])
 
 
+# ── LLM entity extraction ─────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_extract_entities_async_falls_back_to_regex_when_no_url():
+    """Without litellm_base_url, regex path is taken (no network call)."""
+    c = _make_classifier()
+    result = await c._extract_entities_async("Using docker and postgres with Claude")
+    assert isinstance(result, dict)
+    assert "tools" in result
+
+
+@pytest.mark.asyncio
+async def test_extract_entities_async_falls_back_on_llm_error():
+    """If LLM call raises, regex fallback is used — write path never blocks."""
+    c = _make_classifier()
+    c._litellm_base_url = "http://127.0.0.1:9999"  # unreachable
+    # Should not raise — falls back to regex silently
+    result = await c._extract_entities_async("I prefer docker over bare metal")
+    assert isinstance(result, dict)
+
+
+@pytest.mark.asyncio
+async def test_extract_entities_llm_parses_json_response():
+    """LLM path: mock aiohttp response, verify JSON parsed into expected keys."""
+    import json
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    c = _make_classifier()
+    c._litellm_base_url = "http://127.0.0.1:11434"
+    c._litellm_api_key = ""
+    c._llm_model = "local-chat"
+
+    fake_body = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps({
+                        "people": ["Andrej Karpathy"],
+                        "tools": ["postgres", "docker"],
+                        "projects": ["Jeli"],
+                        "orgs": ["LegionForge"],
+                        "concepts": ["hash-chain", "sovereignty"],
+                    })
+                }
+            }
+        ]
+    }
+
+    mock_resp = AsyncMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json = AsyncMock(return_value=fake_body)
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.post = MagicMock(return_value=mock_resp)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("aiohttp.ClientSession", return_value=mock_session):
+        result = await c._extract_entities_llm("JP uses postgres and docker at LegionForge")
+
+    assert "Andrej Karpathy" in result["people"]
+    assert "postgres" in result["tools"]
+    assert "Jeli" in result["projects"]
+    assert "LegionForge" in result["orgs"]
+    assert "hash-chain" in result["concepts"]
+
+
+@pytest.mark.asyncio
+async def test_extract_entities_llm_strips_markdown_fences():
+    """LLM response wrapped in ```json ... ``` is still parsed correctly."""
+    import json
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    c = _make_classifier()
+    c._litellm_base_url = "http://127.0.0.1:11434"
+
+    body = {"choices": [{"message": {"content": "```json\n{\"people\":[],\"tools\":[\"redis\"],\"projects\":[],\"orgs\":[],\"concepts\":[]}\n```"}}]}
+
+    mock_resp = AsyncMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json = AsyncMock(return_value=body)
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = MagicMock()
+    mock_session.post = MagicMock(return_value=mock_resp)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("aiohttp.ClientSession", return_value=mock_session):
+        result = await c._extract_entities_llm("Using redis for caching")
+
+    assert "redis" in result["tools"]
+
+
 # ── content_hash ───────────────────────────────────────────────────────────────
 
 def test_content_hash_normalizes_whitespace():

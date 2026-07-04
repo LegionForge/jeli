@@ -1,7 +1,7 @@
 """IngestionClassifier — the Bouncer.
 
-Heuristic-only v1: no LLM calls. Pure regex + formula + embedding dedup.
-Keeps write-path latency predictable and avoids circular LLM-classifying-LLM-output.
+v1: heuristic core (regex + formula + embedding dedup) — predictable latency.
+v1.1: optional LLM entity extraction via LiteLLM (async, falls back to regex).
 """
 
 import hashlib
@@ -55,7 +55,7 @@ _TECH_TOOLS = frozenset(
 
 
 class IngestionClassifier:
-    CLASSIFIER_VERSION = "1.0.0-heuristic"
+    CLASSIFIER_VERSION = "1.1.0-heuristic+llm-entities"
     DEDUP_REJECT_DISTANCE = 0.10
     DEDUP_MERGE_DISTANCE = 0.15
     DEDUP_HOLD_DISTANCE = 0.22
@@ -67,12 +67,18 @@ class IngestionClassifier:
         dedup_reject: float = DEDUP_REJECT_DISTANCE,
         dedup_merge: float = DEDUP_MERGE_DISTANCE,
         dedup_hold: float = DEDUP_HOLD_DISTANCE,
+        litellm_base_url: str = "",
+        litellm_api_key: str = "",
+        llm_model: str = "local-chat",
     ):
         self.embedder = embedder
         self.db = db
         self.dedup_reject = dedup_reject
         self.dedup_merge = dedup_merge
         self.dedup_hold = dedup_hold
+        self._litellm_base_url = litellm_base_url
+        self._litellm_api_key = litellm_api_key
+        self._llm_model = llm_model
 
     async def classify(
         self,
@@ -89,7 +95,7 @@ class IngestionClassifier:
         suggested_type = self._correct_type(content, caller_type, log)
         suggested_trust = self._calibrate_trust(caller_trust, durability, log)
         keywords = self._extract_keywords(content)
-        entities = self._extract_entities(content)
+        entities = await self._extract_entities_async(content)
         encoding = Encoding.HYBRID if len(content) > 2000 else Encoding.RAW
 
         # Semantic dedup — the only async step.
@@ -205,6 +211,65 @@ class IngestionClassifier:
             "tools": list(dict.fromkeys(tools))[:10],
             "projects": projects[:10],
         }
+
+    async def _extract_entities_async(self, content: str) -> dict:
+        """Entity extraction: LLM if configured, regex fallback.
+
+        LLM path calls local Qwen3-4B via LiteLLM for richer coverage
+        (organizations, concepts, dates, locations beyond the regex list).
+        Falls back to regex on any error so the write path is never blocked.
+        """
+        if self._litellm_base_url:
+            try:
+                return await self._extract_entities_llm(content)
+            except Exception:
+                logger.warning("LLM entity extraction failed — using regex", exc_info=True)
+        return self._extract_entities(content)
+
+    async def _extract_entities_llm(self, content: str) -> dict:
+        """LLM entity extraction via LiteLLM proxy."""
+        import aiohttp
+
+        prompt = (
+            "Extract named entities from the following text. "
+            "Return ONLY a JSON object with these keys: "
+            "people (list of person names), tools (list of software/tech tools), "
+            "projects (list of project names), orgs (list of organizations), "
+            "concepts (list of key domain concepts). "
+            "If none found for a category, use an empty list. "
+            "Return only the JSON, no explanation.\n\n"
+            f"Text: {content[:800]}"
+        )
+        headers = {"Content-Type": "application/json"}
+        if self._litellm_api_key:
+            headers["Authorization"] = f"Bearer {self._litellm_api_key}"
+
+        connector = aiohttp.TCPConnector(force_close=True)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            async with session.post(
+                f"{self._litellm_base_url}/chat/completions",
+                headers=headers,
+                json={
+                    "model": self._llm_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.0,
+                    "max_tokens": 300,
+                },
+                timeout=aiohttp.ClientTimeout(total=15.0),
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+
+        raw = data["choices"][0]["message"]["content"]
+        # Strip markdown fences if present
+        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.MULTILINE)
+        parsed = json.loads(raw)
+        # Normalise: ensure all expected keys exist
+        result = {}
+        for key in ("people", "tools", "projects", "orgs", "concepts"):
+            val = parsed.get(key, [])
+            result[key] = [str(v) for v in val if v][:10]
+        return result
 
     async def _check_dedup(
         self, content: str

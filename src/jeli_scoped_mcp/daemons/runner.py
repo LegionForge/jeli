@@ -65,6 +65,9 @@ class DaemonRunner:
             dedup_reject=self.settings.inbox_dedup_reject_distance,
             dedup_merge=self.settings.inbox_dedup_merge_distance,
             dedup_hold=self.settings.inbox_dedup_hold_distance,
+            litellm_base_url=self.settings.litellm_base_url,
+            litellm_api_key=self.settings.litellm_api_key,
+            llm_model=self.settings.reranker_model,
         )
         concurrency = self.settings.inbox_worker_concurrency
 

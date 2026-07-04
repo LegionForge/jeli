@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     # Embedding
     # Local-first: sovereignty is the default, cloud is the opt-in.
-    embedding_provider: Literal["openai", "ollama"] = Field(default="ollama")
+    embedding_provider: Literal["openai", "ollama", "mlx"] = Field(default="ollama")
     embedding_dimensions: int = Field(default=0)
     embed_keep_alive: str = Field(default="30m")
     # These env vars intentionally omit the SCOPED_MCP_ prefix (standard names).
