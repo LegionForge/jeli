@@ -1,13 +1,18 @@
 """MCP server implementation for Scoped Memory Access.
 
-Exposes exactly four tools (capture_memory, search_memory, audit_trail,
-verify_chain) over stdio. The `actor` on every call comes from the server's
-own identity config, never from tool arguments — an agent cannot impersonate
-another writer.
+Exposes four tools over stdio. When inbox_enabled=True (default), capture_memory
+writes to the staging inbox and returns immediately — classification and chain-write
+happen asynchronously in the InboxWorker. When inbox_enabled=False, writes go
+directly to the hash-chain (used in tests / CLI flows).
+
+The `actor` on every call comes from the server's own identity config, never from
+tool arguments — an agent cannot impersonate another writer.
 """
 
+import hashlib
 import json
 import logging
+import re
 from typing import Any
 
 from ..config import Settings
@@ -21,9 +26,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "capture_memory",
         "description": (
-            "Append one memory to the hash-chained store. Content is "
-            "sanitized; injection-like content is accepted but capped at "
-            "external-grade trust (0.3) and flagged."
+            "Submit a memory for ingestion. When the inbox is enabled (default), "
+            "returns {inbox_id, status: 'queued'} immediately — the Bouncer classifies "
+            "and chain-writes asynchronously. When inbox is disabled, writes directly "
+            "and returns {id, record_hash, trust_score}."
         ),
         "inputSchema": {
             "type": "object",
@@ -42,7 +48,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 },
                 "trust_score": {
                     "type": "number",
-                    "description": ("0.3 external … 0.6 agent-inferred … 1.0 user-stated"),
+                    "description": "0.3 external … 0.6 agent-inferred … 1.0 user-stated",
                 },
                 "session_id": {"type": "string"},
                 "metadata": {"type": "object"},
@@ -94,6 +100,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 ]
 
 
+def _content_hash(content: str) -> str:
+    normalized = re.sub(r"\s+", " ", content.lower().strip())
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
 class ScopedMCPServer:
     """Scoped MCP Server — gates agent access to memory system."""
 
@@ -103,16 +114,22 @@ class ScopedMCPServer:
         embedder: EmbeddingProvider,
         settings: Settings,
     ):
-        """Initialize the Scoped MCP server."""
         self.db = db
         self.embedder = embedder
         self.settings = settings
-        self.tools = MemoryTools(db=db, embedder=embedder, chain_key=settings.chain_key)
+        self.tools = MemoryTools(
+            db=db,
+            embedder=embedder,
+            chain_key=settings.chain_key,
+            key_id=settings.chain_key_id,
+        )
 
     async def dispatch(self, name: str, arguments: dict) -> dict | list:
         """Route one tool call to MemoryTools with the server-side actor."""
         actor = self.settings.agent_actor
         if name == "capture_memory":
+            if self.settings.inbox_enabled:
+                return await self._submit_to_inbox(arguments, actor)
             return await self.tools.capture_memory(
                 content=arguments["content"],
                 memory_type=arguments["memory_type"],
@@ -135,9 +152,44 @@ class ScopedMCPServer:
             return await self.tools.verify_chain()
         raise MemoryToolError(f"unknown tool: {name}")
 
+    async def _submit_to_inbox(self, arguments: dict, actor: str) -> dict:
+        """Write to inbox and return immediately — non-blocking."""
+        content = arguments["content"]
+        if not content or not content.strip():
+            raise MemoryToolError("content must be non-empty")
+
+        row = await self.db.fetchrow(
+            """
+            INSERT INTO memory_inbox (
+                content, content_hash, source_agent, session_id,
+                caller_trust, caller_type
+            ) VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id, submitted_at
+            """,
+            content,
+            _content_hash(content),
+            actor,
+            arguments.get("session_id"),
+            float(arguments["trust_score"]),
+            arguments["memory_type"],
+        )
+        if row is None:
+            raise MemoryToolError("inbox insert failed")
+
+        logger.info(
+            "capture_memory: queued to inbox id=%s actor=%s type=%s",
+            row["id"],
+            actor,
+            arguments["memory_type"],
+        )
+        return {
+            "inbox_id": str(row["id"]),
+            "status": "queued",
+            "submitted_at": row["submitted_at"].isoformat(),
+        }
+
     async def run_stdio(self):
         """Run MCP server on stdio transport."""
-        # Imported here so the tools layer stays testable without the SDK.
         from mcp.server import Server
         from mcp.server.stdio import stdio_server
         from mcp.types import TextContent, Tool
@@ -169,5 +221,5 @@ class ScopedMCPServer:
     async def run_http(self):
         """Run MCP server on HTTP transport (dev/testing only)."""
         raise NotImplementedError(
-            "HTTP transport is not implemented; use stdio " "(SCOPED_MCP_TRANSPORT=stdio)"
+            "HTTP transport is not implemented; use stdio (SCOPED_MCP_TRANSPORT=stdio)"
         )

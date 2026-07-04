@@ -1,56 +1,80 @@
 """Configuration management for Jeli Scoped MCP Server."""
 
-import os
 from typing import Literal
 
-from pydantic_settings import BaseSettings
+from pydantic import AliasChoices, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Load and validate configuration from environment variables."""
 
+    model_config = SettingsConfigDict(
+        env_prefix="SCOPED_MCP_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
     # Database
-    db_url: str = os.getenv("SCOPED_MCP_DB_URL", "postgresql://ob1_app@127.0.0.1:5433/openbrain")
-    db_min_size: int = int(os.getenv("SCOPED_MCP_DB_MIN_SIZE", "5"))
-    db_max_size: int = int(os.getenv("SCOPED_MCP_DB_MAX_SIZE", "20"))
+    db_url: str = Field(default="postgresql://jeli_app@127.0.0.1:5442/jeli")
+    db_min_size: int = Field(default=5)
+    db_max_size: int = Field(default=20)
 
     # Security
-    api_key: str = os.getenv("SCOPED_MCP_API_KEY", "")
-    chain_key: str = os.getenv("SCOPED_MCP_CHAIN_KEY", "")
-    chain_key_id: str = os.getenv("SCOPED_MCP_CHAIN_KEY_ID", "k1")
+    api_key: str = Field(default="")
+    chain_key: str = Field(default="")
+    chain_key_id: str = Field(default="k1")
 
     # Identity stamped on every write/audit row; server-side so agents
     # cannot impersonate another writer.
-    agent_actor: str = os.getenv("SCOPED_MCP_AGENT_ACTOR", "unknown-agent")
+    agent_actor: str = Field(default="unknown-agent")
 
     # Embedding
     # Local-first: sovereignty is the default, cloud is the opt-in.
-    embedding_provider: Literal["openai", "ollama"] = os.getenv("SCOPED_MCP_EMBEDDING_PROVIDER", "ollama")  # type: ignore
-    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
-    ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-    ollama_model: str = os.getenv("OLLAMA_MODEL", "snowflake-arctic-embed2")
-    embedding_dimensions: int = int(os.getenv("SCOPED_MCP_EMBEDDING_DIMENSIONS", "0"))
-    embed_keep_alive: str = os.getenv("SCOPED_MCP_EMBED_KEEP_ALIVE", "30m")
+    embedding_provider: Literal["openai", "ollama"] = Field(default="ollama")
+    embedding_dimensions: int = Field(default=0)
+    embed_keep_alive: str = Field(default="30m")
+    # These env vars intentionally omit the SCOPED_MCP_ prefix (standard names).
+    openai_api_key: str = Field(
+        default="", validation_alias=AliasChoices("OPENAI_API_KEY", "scoped_mcp_openai_api_key")
+    )
+    ollama_base_url: str = Field(
+        default="http://127.0.0.1:11434",
+        validation_alias=AliasChoices("OLLAMA_BASE_URL", "scoped_mcp_ollama_base_url"),
+    )
+    ollama_model: str = Field(
+        default="snowflake-arctic-embed2",
+        validation_alias=AliasChoices("OLLAMA_MODEL", "scoped_mcp_ollama_model"),
+    )
+
+    # Inbox / Bouncer
+    inbox_enabled: bool = Field(default=True)
+    inbox_poll_interval: float = Field(default=5.0)
+    inbox_max_retries: int = Field(default=3)
+    inbox_dedup_reject_distance: float = Field(default=0.10)
+    inbox_dedup_merge_distance: float = Field(default=0.15)
+    inbox_dedup_hold_distance: float = Field(default=0.22)
+    inbox_worker_concurrency: int = Field(default=1)
+
+    # Daemons
+    conflict_resolver_enabled: bool = Field(default=True)
+    conflict_resolver_concurrency: int = Field(default=1)
+    insights_enabled: bool = Field(default=True)
+    maintenance_enabled: bool = Field(default=True)
 
     # Server
-    transport: Literal["stdio", "http"] = os.getenv("SCOPED_MCP_TRANSPORT", "stdio")  # type: ignore
-    log_level: str = os.getenv("SCOPED_MCP_LOG_LEVEL", "INFO")
-    log_format: Literal["json", "text"] = os.getenv("SCOPED_MCP_LOG_FORMAT", "json")  # type: ignore
-    enable_metrics: bool = os.getenv("SCOPED_MCP_ENABLE_METRICS", "true").lower() == "true"
-    metrics_port: int = int(os.getenv("SCOPED_MCP_METRICS_PORT", "8000"))
+    transport: Literal["stdio", "http"] = Field(default="stdio")
+    log_level: str = Field(default="INFO")
+    log_format: Literal["json", "text"] = Field(default="json")
+    enable_metrics: bool = Field(default=True)
+    metrics_port: int = Field(default=8000)
 
     # Development
-    debug: bool = os.getenv("DEBUG", "false").lower() == "true"
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    debug: bool = Field(default=False)
 
     def validate_required(self):
         """Validate that all required settings are present."""
-        # stdio's auth boundary is process spawn; the API key guards the
-        # (future) HTTP transport only — requiring it for stdio would be
-        # security theater.
         if self.transport == "http" and not self.api_key:
             raise ValueError("SCOPED_MCP_API_KEY is required for http transport")
         if not self.chain_key:
