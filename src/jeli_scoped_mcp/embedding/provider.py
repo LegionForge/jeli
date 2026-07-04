@@ -235,7 +235,7 @@ class MLXProvider(EmbeddingProvider):
                 "set SCOPED_MCP_EMBEDDING_DIMENSIONS explicitly"
             )
         self._dimensions = dims
-        self._encoder = None  # lazy-loaded on first embed call
+        self._encoder: "object | None" = None  # lazy-loaded; never None after _load()
 
     def _load(self):
         """Lazy-load sentence-transformers model onto MPS device."""
@@ -259,8 +259,10 @@ class MLXProvider(EmbeddingProvider):
         self._load()
         loop = asyncio.get_event_loop()
         # Run blocking inference in thread pool so the event loop stays free.
+        encoder = self._encoder
+        assert encoder is not None
         vector = await loop.run_in_executor(
-            None, lambda: self._encoder.encode(text, normalize_embeddings=True).tolist()
+            None, lambda: encoder.encode(text, normalize_embeddings=True).tolist()  # type: ignore[union-attr]
         )
         if len(vector) != self._dimensions:
             raise ValueError(

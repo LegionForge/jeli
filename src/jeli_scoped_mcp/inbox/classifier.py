@@ -193,7 +193,7 @@ class IngestionClassifier:
             dict.fromkeys(re.findall(r"@(\w+)|(?<![A-Z])([A-Z][a-z]+\s[A-Z][a-z]+)", content))
         )
         # Flatten tuple matches from alternation.
-        people_flat = []
+        people_flat: list[str] = []
         for p in people:
             if isinstance(p, tuple):
                 people_flat.extend(x for x in p if x)
