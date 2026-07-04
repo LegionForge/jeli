@@ -26,29 +26,78 @@ Jeli adds cryptographic integrity and governance to memory systems:
 
 ## Architecture
 
-Jeli is built on **three-branch governance** (separation of powers):
+Jeli is built on **three-branch governance** — separation of powers between the agents that propose memories, the store that holds them, and the engine that resolves contradictions. A cryptographically inviolable Constitutional layer sits beneath all three.
 
-```
-Executive (Agents) ←→ Scoped MCP ←→ Legislative (Memory Store) ←→ Judicial (Conflict Resolution)
-                      (Jeli Layer)                           ↓
-                                          Constitutional Layer (User-Signed, Inviolable)
+```mermaid
+flowchart TB
+    subgraph EXEC["Executive — Agents"]
+        direction LR
+        H([Hermes])
+        CL([Claude / Codex])
+        FA([Future Agents])
+    end
+
+    subgraph JELI["Jeli — Security & Governance Layer"]
+        direction TB
+        subgraph MCP["Scoped MCP Server"]
+            direction LR
+            AUTH[Auth · HMAC · rate-limit]
+            IDEF[Injection defense · trust cap]
+            TOOLS["capture_memory · search_memory · audit_trail
+redact · summarize_session · verify_chain"]
+        end
+        subgraph BOUNCER["Ingestion Bouncer"]
+            direction LR
+            INBOX[memory_inbox\nstaging table]
+            CLF[IngestionClassifier\ndedup · classify · entity extract]
+            WRK[InboxWorker ×N\nparallel safe]
+            INBOX --> CLF --> WRK
+        end
+        MCP -->|approved writes| BOUNCER
+    end
+
+    subgraph LEGIS["Legislative — Storage"]
+        direction TB
+        PG[("PostgreSQL 16
++ pgvector")]
+        CHAIN["memory_entry
+hash-chained · HMAC-SHA256
+vector(1024) HNSW index"]
+        AUDIT["memory_audit_log · memory_state_event
+conflict_queue · daemon_runs"]
+    end
+
+    subgraph DAEMONS["Background Daemons"]
+        direction LR
+        CRD["ConflictResolverDaemon
+Judicial: trust-score arbitration
+precedent logging"]
+        INS["InsightsDaemon
+consolidation · decay scoring"]
+        MNT[MaintenanceDaemon]
+    end
+
+    CONST[/"Constitutional Layer  ·  User-signed  ·  Cryptographically Inviolable
+Data stays local  ·  No PII off-machine  ·  User veto on irreversible actions"/]
+
+    EXEC -->|"stdio / HTTP  ·  MCP tool calls"| MCP
+    WRK -->|hash-chained append| PG
+    MCP -->|search / audit / verify| PG
+    PG -->|"pg_notify  INSERT trigger"| CRD
+    CRD -->|precedent log| PG
+    CRD -.->|unresolvable conflict| CONST
+    INS <-->|read + annotate| PG
+    MNT <-->|compact + prune| PG
+    CONST -.->|inviolable constraints| MCP
 ```
 
-- **Executive:** Hermes, Claude, future agents — propose memories via MCP only
-- **Scoped MCP (Jeli's Access Control):** Enforces security policy, validates integrity, detects injection
-- **Legislative:** PostgreSQL + pgvector (optional: OB1) — canonical source with append-only hash chain
-- **Judicial:** Conflict resolution engine — arbitrates contradictions using trust scores, precedent, provenance
-- **Constitutional:** User-signed, cryptographically inviolable layer — data stays local, no PII leaves machine, user veto on irreversible actions
-
-## 4-Layer System Stack
-
-```
-Capture Layer        → raw events (browser, apps, CLI, voice, clipboard, git, conversations)
-Ingestion Layer      → dedup, classify, extract entities, embeddings, provenance, hash-chain
-Storage Layer        → Postgres + pgvector, KV store, graph, audit log, object store
-Intelligence Layer   → dreaming, consolidation, contradiction detection, insight surfacing
-Agent API (MCP)      → unified interface for any agent to read/write memories
-```
+**Branches:**
+- **Executive (Agents):** Hermes, Claude, Codex — propose memories via MCP only; no direct DB access
+- **Scoped MCP:** Jeli's enforcement point — authenticates callers, caps trust on flagged content, logs every operation
+- **Ingestion Bouncer:** Staging layer before hash-chain commit — dedup, classify, entity extraction, N-instance safe queue
+- **Legislative (Storage):** PostgreSQL + pgvector — append-only hash-chained log; no silent UPDATE or DELETE
+- **Judicial (Daemons):** ConflictResolverDaemon arbitrates contradictions; InsightsDaemon runs consolidation; unresolvable conflicts surface to user
+- **Constitutional:** Cryptographically signed constraints no branch can override — data stays local, user veto on irreversible actions
 
 ## Cryptographic Integrity
 
@@ -76,17 +125,100 @@ Verification command: `jeli verify` — walks the provenance log, recomputes all
 
 Jeli is designed to work **alongside** [OB1](https://github.com/NateBJones-Projects/OB1) (by Nate B. Jones), a personal memory system that excels at multi-source ingestion and semantic search.
 
-**Proposed Partnership:**
-- **OB1** handles ingestion, retrieval, multi-AI access (what it does best)
-- **Jeli** adds security, governance, cryptographic guarantees (what it does best)
-- **Together:** Trustworthy, sovereign memory that multiple AIs can safely use
+The diagram below shows the integration points — where each system's responsibility begins and ends, and how they share a PostgreSQL cluster without interfering with each other.
 
-**Installation Model:** Jeli is optional and installable:
-- Install: `jeli init --with-ob1` (adds security tables, Scoped MCP)
-- Use: OB1 works as-is; Jeli layer is opt-in
-- Remove: `jeli uninstall --keep-ob1` (drops Jeli tables, OB1 unaffected)
+```mermaid
+flowchart TB
+    subgraph AGENTS["Agents"]
+        direction LR
+        H([Hermes])
+        CL([Claude])
+        CD([Codex])
+        OTH([Other MCP clients])
+    end
 
-Users who don't need security use OB1 standalone. Users who do get cryptographic guarantees.
+    subgraph JELI_GATE["Jeli Write Gateway  (port: stdio or 8001)"]
+        direction TB
+        SMCP["Scoped MCP Server
+────────────────────────────
+• Authentication + rate-limit
+• Injection defense + trust cap
+• hash-chained capture_memory
+• redact · summarize_session
+• audit_trail · verify_chain"]
+        BNCR["Ingestion Bouncer
+────────────────────────────
+• memory_inbox staging
+• IngestionClassifier
+  dedup · classify · LLM entities
+• InboxWorker ×N"]
+        SMCP -->|approved writes| BNCR
+    end
+
+    subgraph OB1_GATE["OB1 Read Gateway  (port: 8100)"]
+        OB1MCP["OB1 MCP Server
+────────────────────────────
+• Multi-source ingestion
+• Semantic search + retrieval
+• Multi-AI access (any agent)
+• Conversational memory API"]
+    end
+
+    subgraph SHARED_DB["Shared PostgreSQL Cluster"]
+        direction LR
+        subgraph OB1_SCHEMA["OB1 Schema  (untouched by Jeli)"]
+            OT[("ob1_memories
+ob1_embeddings
+ob1_conversations
+ob1_sources")]
+        end
+        subgraph JELI_SCHEMA["Jeli Schema  (added non-destructively)"]
+            JT[("memory_entry  ← hash-chained
+memory_inbox  ← staging
+memory_audit_log
+memory_state_event
+conflict_queue
+alembic_version")]
+        end
+    end
+
+    subgraph JELI_DAEMONS["Jeli Background Daemons"]
+        direction LR
+        CRD["ConflictResolverDaemon
+Judicial arbitration"]
+        INS["InsightsDaemon
+Consolidation · decay"]
+    end
+
+    CONST[/"Constitutional Layer  ·  User-signed
+Data local  ·  User veto on irreversible actions"/]
+
+    AGENTS -->|"write / audit calls"| JELI_GATE
+    AGENTS -->|"read / search calls"| OB1_GATE
+    BNCR -->|"append-only hash-chained writes"| JT
+    OB1MCP <-->|"reads + ingests"| OT
+    JT -.->|"pg_notify conflict trigger"| CRD
+    CRD & INS <-->|"operates on"| JT
+    CRD -.->|unresolvable| CONST
+    CONST -.->|inviolable bounds| SMCP
+
+    OT -.->|"future: Jeli integrity layer\nover OB1 writes"| JT
+```
+
+**Integration points:**
+
+| Point | What happens |
+|---|---|
+| **Write path** | Agents call Jeli's Scoped MCP → Bouncer → hash-chained `memory_entry`. Jeli enforces integrity before any data lands. |
+| **Read path** | Agents call OB1's MCP server directly. OB1 handles retrieval; Jeli doesn't duplicate it. |
+| **Shared PostgreSQL cluster** | Jeli creates its own tables (`jeli init --with-ob1`) alongside OB1's schema. No OB1 table is touched. |
+| **Future: write wrapping** | OB1 writes can route through Jeli's Bouncer so all memories — regardless of source — carry hash-chain provenance. (Dotted line above.) |
+| **Removal** | `jeli uninstall --keep-ob1` drops Jeli tables only. OB1 is unaffected. |
+
+**Division of responsibility:**
+- **OB1** — ingestion breadth, retrieval quality, multi-AI access (what it does best)
+- **Jeli** — cryptographic integrity, injection defense, trust scoring, audit trail, user veto (what it does best)
+- **Together** — trustworthy, sovereign memory that multiple AIs can safely use, with a verifiable chain of custody for every fact
 
 **Current Status:** Exploring partnership with Nate. See [Extension Proposal](https://github.com/NateBJones-Projects/OB1/issues) for feedback. Can also be deployed standalone.
 
