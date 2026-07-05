@@ -17,8 +17,13 @@ if config.config_file_name is not None:
         # Logging configuration may have issues; skip it
         pass
 
-# Load database URL from environment or use default
-db_url = os.getenv("SCOPED_MCP_DB_URL", "postgresql://jeli_app@127.0.0.1:5442/jeli")
+# Migrations need DDL privileges (jeli_admin). Prefer SCOPED_MCP_ADMIN_DB_URL
+# if set; fall back to SCOPED_MCP_DB_URL for environments where a single
+# superuser account covers both roles.
+db_url = (
+    os.getenv("SCOPED_MCP_ADMIN_DB_URL")
+    or os.getenv("SCOPED_MCP_DB_URL", "postgresql://jeli_app@127.0.0.1:5442/jeli")
+)
 config.set_main_option("sqlalchemy.url", db_url)
 
 
