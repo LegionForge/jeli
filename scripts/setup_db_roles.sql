@@ -32,7 +32,16 @@ GRANT SELECT, INSERT ON memory_contradiction TO jeli_app;
 -- audit log id is BIGSERIAL; INSERT needs the sequence
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO jeli_app;
 
--- explicitly no UPDATE, no DELETE, no TRUNCATE, anywhere.
+-- Hash-chained history: no UPDATE, no DELETE, no TRUNCATE. The only
+-- exceptions are column-scoped and cannot alter attested history — see
+-- migration 010_app_role_append_only (which also applies these grants and
+-- keeps the queue tables below mutable):
+--   memory_entry.embedding                          derived index artifact
+--   memory_entry.valid_until/superseded_by/
+--     amended_from                                  cache; authority is the
+--                                                   memory_state_event chain
+--   memory_inbox (UPDATE, DELETE)                   staging queue
+--   memory_conflict_queue, daemon_runs (UPDATE)     status transitions
 
 -- ── user tier ────────────────────────────────────────────────────────────────
 -- jeli_user: JP's own CLI operations (jeli revise / invalidate). May retire
