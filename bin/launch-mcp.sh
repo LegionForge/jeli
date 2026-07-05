@@ -43,7 +43,9 @@ if [ "${JELI_SKIP_BACKUP:-0}" != "1" ] && command -v pg_dump > /dev/null 2>&1; t
         mkdir -p "$BACKUP_DIR"
         BACKUP_FILE="$BACKUP_DIR/pre-migrate-$(date +%Y%m%d-%H%M%S).sql"
         # Pull DB URL from the env the same way pydantic-settings does.
-        DB_URL=$(grep -E '^SCOPED_MCP_DB_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || true)
+        # Prefer admin URL for backup too (has read rights; app URL works either way)
+        DB_URL=$(grep -E '^SCOPED_MCP_ADMIN_DB_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || true)
+        DB_URL=${DB_URL:-$(grep -E '^SCOPED_MCP_DB_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || true)}
         if [ -n "$DB_URL" ]; then
             pg_dump "$DB_URL" > "$BACKUP_FILE" \
                 && echo "jeli: pre-migration backup → $BACKUP_FILE"
