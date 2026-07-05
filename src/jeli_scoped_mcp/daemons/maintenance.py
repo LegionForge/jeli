@@ -3,7 +3,6 @@
 import logging
 from datetime import UTC, datetime, timedelta
 
-from ..core.trust_score import TrustAdjustment
 from ..database.pool import AsyncPostgresPool
 from ..tools.memory_tools import MemoryTools
 
@@ -27,39 +26,14 @@ class MaintenanceDaemon:
         return results
 
     async def _apply_trust_decay(self) -> dict:
-        """Decay agent-inferred memories (trust < 0.9) by 1%/day."""
-        rows = await self.db.fetchall(
-            """
-            SELECT id, trust_score, created_at
-            FROM memory_entry
-            WHERE valid_until IS NULL
-              AND trust_score < 0.9
-            ORDER BY created_at ASC
-            LIMIT $1
-            """,
-            self.DECAY_BATCH_SIZE,
-        )
-        updated = 0
-        now = datetime.now(UTC)
-        for row in rows:
-            days = (now - row["created_at"].replace(tzinfo=UTC)).days
-            if days < 1:
-                continue
-            new_trust = TrustAdjustment.decay_over_time(
-                float(row["trust_score"]), days_elapsed=days
-            )
-            if abs(new_trust - float(row["trust_score"])) < 0.001:
-                continue
-            try:
-                await self.db.execute(
-                    "UPDATE memory_entry SET trust_score = $1 WHERE id = $2",
-                    round(new_trust, 4),
-                    row["id"],
-                )
-                updated += 1
-            except Exception:
-                logger.warning("decay: failed to update %s", row["id"], exc_info=True)
-        return {"decayed": updated}
+        """Trust decay is disabled: trust_score is part of the canonical record
+        hash, so mutating it in place makes every decayed record fail
+        verify_chain — indistinguishable from tampering (GH #19). Migration 010
+        also revokes UPDATE on the column. Decay will return as a read-time
+        computation (effective_trust from age at query time), never a stored
+        mutation.
+        """
+        return {"decayed": 0, "disabled": "stored decay breaks the hash chain (GH #19)"}
 
     async def _archive_expired(self) -> dict:
         """Move expired memories older than ARCHIVE_AFTER_DAYS to memory_archive."""
