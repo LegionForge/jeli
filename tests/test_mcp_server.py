@@ -200,3 +200,40 @@ async def test_actor_is_server_side_even_if_argument_passed():
     )
     kwargs = server.tools.capture_memory.await_args.kwargs
     assert kwargs["actor"] == "test-agent"
+
+
+# ── search scoping passthrough (GH #16) ──────────────────────────────────────
+
+
+async def test_search_scope_filters_passed_through():
+    server = _server(_settings())
+    await server.dispatch(
+        "search_memory",
+        {
+            "query": "q",
+            "memory_type": "preference",
+            "min_trust": 0.6,
+            "content_class": "general",
+            "project": "jeli",
+        },
+    )
+    kwargs = server.tools.search_memory.await_args.kwargs
+    assert kwargs["memory_type"] == "preference"
+    assert kwargs["min_trust"] == 0.6
+    assert kwargs["content_class"] == "general"
+    assert kwargs["project"] == "jeli"
+
+
+async def test_search_rejects_unknown_content_class():
+    server = _server(_settings())
+    with pytest.raises(MemoryToolError, match="content_class"):
+        await server.dispatch(
+            "search_memory", {"query": "q", "content_class": "sneaky"}
+        )
+    server.tools.search_memory.assert_not_awaited()
+
+
+def test_search_schema_declares_scope_filters():
+    search = next(t for t in TOOL_DEFINITIONS if t["name"] == "search_memory")
+    props = search["inputSchema"]["properties"]
+    assert {"memory_type", "min_trust", "content_class", "project"} <= set(props)
