@@ -107,6 +107,37 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "more accurate). Only applies to mode=semantic."
                     ),
                 },
+                "memory_type": {
+                    "type": "string",
+                    "enum": [
+                        "preference",
+                        "identity",
+                        "episodic",
+                        "semantic",
+                        "procedural",
+                        "transient",
+                    ],
+                    "description": "Only return memories of this type.",
+                },
+                "min_trust": {
+                    "type": "number",
+                    "description": (
+                        "Minimum effective (age-decayed) trust; e.g. 0.6 "
+                        "excludes external-source and heavily stale content."
+                    ),
+                },
+                "content_class": {
+                    "type": "string",
+                    "enum": sorted(VALID_CONTENT_CLASSES),
+                    "description": "Only return memories of this content class.",
+                },
+                "project": {
+                    "type": "string",
+                    "description": (
+                        "Only return memories stamped with this project "
+                        "(metadata.project at capture time)."
+                    ),
+                },
             },
             "required": ["query"],
         },
@@ -223,12 +254,21 @@ class ScopedMCPServer:
                 content_class=content_class,
             )
         if name == "search_memory":
+            class_filter: str | None = arguments.get("content_class")
+            if class_filter is not None and class_filter not in VALID_CONTENT_CLASSES:
+                raise MemoryToolError(
+                    f"content_class must be one of {sorted(VALID_CONTENT_CLASSES)}"
+                )
             return await self.tools.search_memory(
                 query=arguments["query"],
                 actor=actor,
                 mode=arguments.get("mode", "semantic"),
                 limit=arguments.get("limit", 10),
                 rerank=arguments.get("rerank", False),
+                memory_type=arguments.get("memory_type"),
+                min_trust=arguments.get("min_trust"),
+                content_class=class_filter,
+                project=arguments.get("project"),
             )
         if name == "audit_trail":
             return await self.tools.audit_trail(memory_id=arguments["memory_id"], actor=actor)
