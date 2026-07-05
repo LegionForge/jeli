@@ -1,12 +1,21 @@
 """MCP server implementation for Scoped Memory Access.
 
-Exposes four tools over stdio. When inbox_enabled=True (default), capture_memory
-writes to the staging inbox and returns immediately — classification and chain-write
-happen asynchronously in the InboxWorker. When inbox_enabled=False, writes go
-directly to the hash-chain (used in tests / CLI flows).
+Exposes four agent-safe tools over stdio: capture_memory, search_memory,
+audit_trail, summarize_session. When inbox_enabled=True (default), every write
+goes through the staging inbox and returns immediately — classification and
+chain-write happen asynchronously in the InboxWorker. When inbox_enabled=False,
+writes go directly to the hash-chain (used in tests / CLI flows).
 
-The `actor` on every call comes from the server's own identity config, never from
-tool arguments — an agent cannot impersonate another writer.
+Server-side authority, never trusted from arguments:
+  actor        — the server's own identity config; an agent cannot impersonate
+                 another writer.
+  trust        — agent-declared trust_score is clamped to
+                 settings.agent_trust_ceiling (0.6 = agent-inferred). The ≥0.9
+                 "user confirmed" tiers require an actual human in the loop
+                 (jeli CLI, inbox review) and are unreachable from MCP (GH #14).
+
+Deliberately NOT exposed to agents: verify_chain (operator function, O(n) scan
+— GH #17), redact / revise / invalidate (user-tier state changes — GH #13).
 """
 
 import hashlib
@@ -19,6 +28,7 @@ from ..config import Settings
 from ..database.pool import AsyncPostgresPool
 from ..embedding.provider import EmbeddingProvider
 from ..reranker.provider import RerankerProvider
+from ..security import VALID_CONTENT_CLASSES
 from ..tools.memory_tools import MemoryToolError, MemoryTools
 
 logger = logging.getLogger(__name__)
@@ -49,7 +59,21 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 },
                 "trust_score": {
                     "type": "number",
-                    "description": "0.3 external … 0.6 agent-inferred … 1.0 user-stated",
+                    "description": (
+                        "0.3 external … 0.6 agent-inferred. Values above the "
+                        "server's agent ceiling (default 0.6) are clamped — "
+                        "user-confirmed tiers require human review."
+                    ),
+                },
+                "content_class": {
+                    "type": "string",
+                    "enum": sorted(VALID_CONTENT_CLASSES),
+                    "default": "general",
+                    "description": (
+                        "Content category for the two-axis trust model "
+                        "(security-doc marks injection-looking reference "
+                        "material; only takes effect for user-tier sources)."
+                    ),
                 },
                 "session_id": {"type": "string"},
                 "metadata": {"type": "object"},
@@ -99,19 +123,12 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
     {
-        "name": "verify_chain",
-        "description": (
-            "Recompute every record hash oldest→newest; returns chain_valid "
-            "and the first tampered record id, if any."
-        ),
-        "inputSchema": {"type": "object", "properties": {}},
-    },
-    {
         "name": "summarize_session",
         "description": (
-            "Store an end-of-session summary as an episodic memory (trust 0.9). "
-            "Call this at session end with a written summary of what happened; "
-            "the Insights daemon uses session-summary flags during consolidation."
+            "Submit an end-of-session summary as an episodic memory. Goes "
+            "through the same ingestion path as capture_memory (inbox review, "
+            "agent-tier trust); the Insights daemon uses session-summary flags "
+            "during consolidation."
         ),
         "inputSchema": {
             "type": "object",
@@ -123,25 +140,6 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "session_id": {"type": "string"},
             },
             "required": ["content"],
-        },
-    },
-    {
-        "name": "redact",
-        "description": (
-            "Redact a memory's content. The hash-chain record and audit trail "
-            "are preserved so the redaction itself is auditable. The record is "
-            "marked invalid and will not appear in search results."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "memory_id": {"type": "string"},
-                "reason": {
-                    "type": "string",
-                    "description": "Why this memory is being redacted",
-                },
-            },
-            "required": ["memory_id", "reason"],
         },
     },
 ]
@@ -173,25 +171,54 @@ class ScopedMCPServer:
             reranker=self.reranker,
         )
 
+    def _clamp_trust(self, declared: float) -> tuple[float, bool]:
+        """Apply the server-side agent trust ceiling (GH #14).
+
+        Returns (effective_trust, was_clamped). The declared value is kept in
+        metadata by the callers so the clamp is visible in the audit trail.
+        """
+        ceiling = self.settings.agent_trust_ceiling
+        declared = float(declared)
+        if declared > ceiling:
+            return ceiling, True
+        return declared, False
+
+    @staticmethod
+    def _resolve_content_class(arguments: dict) -> str:
+        """content_class may be a top-level arg or nested inside metadata;
+        either way it must be a recognised class — it steers quarantine
+        behavior at retrieval time (GH #15)."""
+        content_class = arguments.get(
+            "content_class",
+            (arguments.get("metadata") or {}).get("content_class", "general"),
+        )
+        if content_class not in VALID_CONTENT_CLASSES:
+            raise MemoryToolError(
+                f"content_class must be one of {sorted(VALID_CONTENT_CLASSES)}"
+            )
+        return content_class
+
     async def dispatch(self, name: str, arguments: dict) -> dict | list:
         """Route one tool call to MemoryTools with the server-side actor."""
         actor = self.settings.agent_actor
         if name == "capture_memory":
-            # content_class may be a top-level arg or nested inside metadata.
-            content_class = arguments.get(
-                "content_class",
-                (arguments.get("metadata") or {}).get("content_class", "general"),
-            )
+            content_class = self._resolve_content_class(arguments)
+            trust, clamped = self._clamp_trust(arguments["trust_score"])
+            metadata = dict(arguments.get("metadata") or {})
+            if clamped:
+                metadata["declared_trust"] = float(arguments["trust_score"])
+                metadata["trust_clamped_to"] = trust
+            arguments = {**arguments, "trust_score": trust, "metadata": metadata}
             if self.settings.inbox_enabled:
                 return await self._submit_to_inbox(arguments, actor, content_class)
             return await self.tools.capture_memory(
                 content=arguments["content"],
                 memory_type=arguments["memory_type"],
-                trust_score=arguments["trust_score"],
+                trust_score=trust,
                 actor=actor,
                 source_agent=actor,
                 session_id=arguments.get("session_id"),
-                metadata=arguments.get("metadata"),
+                metadata=metadata or None,
                 content_class=content_class,
             )
         if name == "search_memory":
@@ -204,19 +231,25 @@ class ScopedMCPServer:
             )
         if name == "audit_trail":
             return await self.tools.audit_trail(memory_id=arguments["memory_id"], actor=actor)
-        if name == "verify_chain":
-            return await self.tools.verify_chain()
         if name == "summarize_session":
+            # Same gate as any other agent write: inbox when enabled, agent-tier
+            # trust always. The old path stored summaries at 0.9 directly on the
+            # chain — an unreviewed high-trust bypass of the Bouncer (GH #12).
+            trust = self.settings.agent_trust_ceiling
+            summary_args = {
+                "content": arguments["content"],
+                "memory_type": "episodic",
+                "trust_score": trust,
+                "session_id": arguments.get("session_id"),
+                "metadata": {"is_session_summary": True},
+            }
+            if self.settings.inbox_enabled:
+                return await self._submit_to_inbox(summary_args, actor, "general")
             return await self.tools.summarize_session(
                 content=arguments["content"],
                 actor=actor,
                 session_id=arguments.get("session_id"),
-            )
-        if name == "redact":
-            return await self.tools.redact(
-                memory_id=arguments["memory_id"],
-                reason=arguments["reason"],
-                actor=actor,
+                trust_score=trust,
             )
         raise MemoryToolError(f"unknown tool: {name}")
 

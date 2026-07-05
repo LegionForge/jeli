@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     # cannot impersonate another writer.
     agent_actor: str = Field(default="unknown-agent")
 
+    # Ceiling applied server-side to agent-declared trust on every MCP write.
+    # 0.6 = agent-inferred in the trust model; the ≥0.9 tiers mean "user
+    # confirmed" and are reserved for paths with an actual human in the loop
+    # (jeli CLI, inbox review). Without this clamp any connected agent could
+    # self-declare user-level authority (GH #14).
+    agent_trust_ceiling: float = Field(default=0.6)
+
     # Embedding
     # Local-first: sovereignty is the default, cloud is the opt-in.
     embedding_provider: Literal["openai", "ollama", "mlx"] = Field(default="ollama")

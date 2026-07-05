@@ -6,6 +6,9 @@ from typing import Literal
 
 # Recognised content categories for the two-axis trust model.
 ContentClass = Literal["general", "security-doc", "code-sample", "external-untrusted"]
+VALID_CONTENT_CLASSES: frozenset[str] = frozenset(
+    ("general", "security-doc", "code-sample", "external-untrusted")
+)
 
 # Source trust threshold above which authoritative content classes bypass the
 # injection trust cap (pattern is still flagged and logged, just not penalised).
