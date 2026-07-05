@@ -196,7 +196,7 @@ class ScopedMCPServer:
             raise MemoryToolError(
                 f"content_class must be one of {sorted(VALID_CONTENT_CLASSES)}"
             )
-        return content_class
+        return str(content_class)
 
     async def dispatch(self, name: str, arguments: dict) -> dict | list:
         """Route one tool call to MemoryTools with the server-side actor."""
