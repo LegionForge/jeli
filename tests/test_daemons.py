@@ -54,23 +54,10 @@ async def test_maintenance_run_once_returns_all_keys():
 
 
 @pytest.mark.asyncio
-async def test_maintenance_trust_decay_skips_fresh_memories():
-    now = datetime.now(UTC)
-    row = MagicMock()
-    row.__getitem__ = lambda s, k: {
-        "id": "m1",
-        "trust_score": 0.6,
-        "created_at": now,  # 0 days old → skipped
-    }[k]
-    db = _db(fetchall=[row])
-    daemon = MaintenanceDaemon(db=db, memory_tools=_memory_tools())
-    result = await daemon._apply_trust_decay()
-    assert result["decayed"] == 0
-    db.execute.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_maintenance_trust_decay_updates_old_memory():
+async def test_maintenance_trust_decay_is_disabled():
+    """Stored decay mutated trust_score, a hashed field — every decayed record
+    would fail verify_chain (GH #19). The daemon must never touch the DB here
+    until decay is reimplemented as a read-time computation."""
     old_time = datetime.now(UTC) - timedelta(days=30)
     row = MagicMock()
     row.__getitem__ = lambda s, k: {
@@ -81,8 +68,10 @@ async def test_maintenance_trust_decay_updates_old_memory():
     db = _db(fetchall=[row])
     daemon = MaintenanceDaemon(db=db, memory_tools=_memory_tools())
     result = await daemon._apply_trust_decay()
-    assert result["decayed"] == 1
-    db.execute.assert_awaited_once()
+    assert result["decayed"] == 0
+    assert "disabled" in result
+    db.execute.assert_not_awaited()
+    db.fetchall.assert_not_awaited()
 
 
 @pytest.mark.asyncio
