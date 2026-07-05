@@ -54,7 +54,7 @@ flowchart TB
             direction LR
             AUTH["Auth · HMAC · rate-limit"]:::jeliGreen
             IDEF["Injection defense · trust cap"]:::jeliGreen
-            TOOLS["capture_memory · search_memory · audit_trail · redact · summarize_session · verify_chain"]:::jeliGreen
+            TOOLS["capture_memory · search_memory · audit_trail · summarize_session (user tier: jeli verify · revise · invalidate · redact)"]:::jeliGreen
         end
 
         subgraph BOUNCER["Ingestion Bouncer"]
@@ -163,7 +163,7 @@ flowchart TB
 
     subgraph JELI_GATE["Jeli — Write Gateway"]
         direction TB
-        SMCP["Scoped MCP Server · Auth · HMAC · injection defense · capture_memory · redact · summarize_session · audit_trail · verify_chain"]:::jeliNode
+        SMCP["Scoped MCP Server · Auth · HMAC · injection defense · agent trust ceiling · capture_memory · summarize_session · search_memory · audit_trail"]:::jeliNode
         BNCR["Ingestion Bouncer · memory_inbox staging · IngestionClassifier · InboxWorker x N parallel"]:::jeliTeal
         SMCP -->|"approved"| BNCR
     end

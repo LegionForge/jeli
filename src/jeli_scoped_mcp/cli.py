@@ -43,6 +43,8 @@ async def _run_state_op(settings: Settings, args) -> dict:
         )
         if args.command == "invalidate":
             return await state.invalidate(args.memory_id, args.reason, args.actor)
+        if args.command == "redact":
+            return await state.redact(args.memory_id, args.reason, args.actor)
         return await state.revise(args.memory_id, args.content, args.reason, args.actor)
     finally:
         await db.close()
@@ -252,6 +254,14 @@ def main(argv: list[str] | None = None) -> int:
     rev_p.add_argument("--reason", required=True)
     rev_p.add_argument("--actor", default="jp")
 
+    red_p = sub.add_parser(
+        "redact",
+        help="redact a memory (chained event; content masked at read time, row never rewritten)",
+    )
+    red_p.add_argument("memory_id")
+    red_p.add_argument("--reason", required=True)
+    red_p.add_argument("--actor", default="jp")
+
     # ── daemon ────────────────────────────────────────────────────────────────
     daemon_p = sub.add_parser("daemon", help="manage background daemons")
     daemon_sub = daemon_p.add_subparsers(dest="daemon_cmd", required=True)
@@ -306,7 +316,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0 if ok else 1
 
-    if args.command in ("invalidate", "revise"):
+    if args.command in ("invalidate", "revise", "redact"):
         result = asyncio.run(_run_state_op(settings, args))
         print(json.dumps(result, indent=1))
         return 0
