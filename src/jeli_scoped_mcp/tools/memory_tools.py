@@ -370,19 +370,23 @@ class MemoryTools:
         content: str,
         actor: str,
         session_id: str | None = None,
+        trust_score: float = 0.9,
     ) -> dict:
         """Store a session summary as an episodic memory.
 
-        Designed for end-of-session consolidation: the caller (agent or user)
-        passes a written summary of the session; Jeli stores it as a
-        first-class episodic memory with user-confirmed trust (0.9) and a
-        metadata flag so the insights daemon can treat summaries specially
-        during consolidation passes.
+        Designed for end-of-session consolidation: the caller passes a written
+        summary of the session; Jeli stores it as a first-class episodic memory
+        with a metadata flag so the insights daemon can treat summaries
+        specially during consolidation passes.
+
+        The 0.9 default is for user-tier callers (CLI). The MCP server always
+        passes its agent trust ceiling instead — an agent-written summary is
+        agent-inferred content, not user-confirmed (GH #12).
         """
         result = await self.capture_memory(
             content=content,
             memory_type="episodic",
-            trust_score=0.9,
+            trust_score=trust_score,
             actor=actor,
             source_agent=actor,
             session_id=session_id,

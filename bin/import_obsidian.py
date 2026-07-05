@@ -16,6 +16,7 @@ import argparse
 import asyncio
 import re
 import sys
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -157,6 +158,9 @@ async def run(vault_root: Path, dry_run: bool, process: bool):
         print(f"  {len(chunks)} chunk(s)")
 
         content_class = _infer_content_class(rel_path)
+        # One stable UUID per file — groups all chunks from the same source.
+        # The human-readable path goes into metadata, not session_id (UUID col).
+        file_session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"obsidian-import:{rel_path}"))
 
         for i, chunk in enumerate(chunks):
             preview = chunk[:80].replace("\n", " ")
@@ -171,7 +175,7 @@ async def run(vault_root: Path, dry_run: bool, process: bool):
                     "memory_type": mem_type,
                     "trust_score": trust,
                     "content_class": content_class,
-                    "session_id": f"obsidian-import:{rel_path}",
+                    "session_id": file_session_id,
                     "metadata": {"source_path": rel_path, "chunk_index": i},
                 },
             )
@@ -210,8 +214,7 @@ async def run(vault_root: Path, dry_run: bool, process: bool):
         print(f"  done — {total_processed} items processed")
 
         rows = await db.fetchall(
-            "SELECT status, COUNT(*) AS cnt FROM memory_inbox "
-            "WHERE session_id LIKE 'obsidian-import:%' GROUP BY status ORDER BY status"
+            "SELECT status, COUNT(*) AS cnt FROM memory_inbox GROUP BY status ORDER BY status"
         )
         print("\n── inbox results ────────────────────────────────────────────")
         for r in rows:
