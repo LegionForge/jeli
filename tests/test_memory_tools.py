@@ -529,3 +529,46 @@ async def test_summarize_session_chains_into_hash_chain(tools, pool):
 
 # Redaction moved to StateTools (chained event, read-time masking — GH #13);
 # see tests/test_state_tools.py.
+
+
+# ── read-time trust decay (GH #19) ───────────────────────────────────────────
+
+
+async def test_search_returns_decayed_effective_trust(tools, pool):
+    from datetime import timedelta
+
+    await capture(tools, content="aging inferred fact", trust_score=0.6)
+    pool.memories[0]["created_at"] = datetime.now(UTC) - timedelta(days=30)
+    hits = await tools.search_memory(query="aging", actor="a")
+    assert hits[0]["trust_score"] == 0.6  # stored value untouched
+    expected = 0.6 * (0.99**30)
+    assert abs(hits[0]["effective_trust"] - expected) < 0.01
+
+
+async def test_user_confirmed_trust_never_decays(tools, pool):
+    from datetime import timedelta
+
+    await capture(tools, content="user stated durable fact", trust_score=1.0)
+    pool.memories[0]["created_at"] = datetime.now(UTC) - timedelta(days=365)
+    hits = await tools.search_memory(query="durable", actor="a")
+    assert hits[0]["effective_trust"] == 1.0
+
+
+async def test_fresh_memory_effective_equals_stored(tools):
+    await capture(tools, content="fresh fact", trust_score=0.6)
+    hits = await tools.search_memory(query="fresh", actor="a")
+    assert hits[0]["effective_trust"] == 0.6
+
+
+async def test_fts_tiebreak_uses_effective_trust(tools, pool):
+    from datetime import timedelta
+
+    # A: stored 0.85 but 90 days stale → effective ≈ 0.34 (floored 0.3+)
+    await capture(tools, content="tiebreak fact ancient", trust_score=0.85)
+    pool.memories[0]["created_at"] = datetime.now(UTC) - timedelta(days=90)
+    # B: stored 0.6, fresh → effective 0.6
+    await capture(tools, content="tiebreak fact recent", trust_score=0.6)
+    hits = await tools.search_memory(query="tiebreak fact", actor="a")
+    assert "recent" in hits[0]["content"]
+    assert "ancient" in hits[1]["content"]
+    assert hits[0]["effective_trust"] > hits[1]["effective_trust"]
