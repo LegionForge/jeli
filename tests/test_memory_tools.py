@@ -159,14 +159,21 @@ class FakePool:
             for h in hits:
                 h = dict(h)
             return [dict(m, distance=0.0) for m in hits[:limit]]
-        if "ILIKE" in query:
+        if "websearch_to_tsquery" in query:
+            # crude tsquery emulation: every query token must appear as a
+            # word in content; rank is the matched-token count
             needle, limit = args
-            hits = [
-                m
-                for m in self.memories
-                if m["valid_until"] is None and needle.lower() in m["content"].lower()
-            ]
-            hits.sort(key=lambda m: (-float(m["trust_score"]), m["created_at"]))
+            tokens = needle.lower().split()
+            hits = []
+            for m in self.memories:
+                if m["valid_until"] is not None:
+                    continue
+                words = set(m["content"].lower().split())
+                if all(t in words for t in tokens):
+                    hits.append(dict(m, rank=float(len(tokens))))
+            hits.sort(
+                key=lambda m: (-m["rank"], -float(m["trust_score"]), m["created_at"])
+            )
             return hits[:limit]
         if "FROM memory_state_event ORDER BY chain_seq ASC" in query:
             return list(self.state_events)

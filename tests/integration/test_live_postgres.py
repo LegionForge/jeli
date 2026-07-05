@@ -217,3 +217,39 @@ async def test_double_retire_refused(live_tools):
     await state.invalidate(r["id"], reason="first", actor="itest")
     with _pytest.raises(MemoryToolError):
         await state.invalidate(r["id"], reason="second", actor="itest")
+
+
+async def test_fts_is_real_full_text_search(live_tools):
+    """GH #18: fts mode must tokenize, stem, and rank — not substring-match."""
+    tools, _db = live_tools
+    await tools.capture_memory(
+        content="The quick brown fox jumps over the lazy dog",
+        memory_type="semantic", trust_score=0.6, actor="itest",
+    )
+    await tools.capture_memory(
+        content="Quick delivery of brown packages arrived today",
+        memory_type="semantic", trust_score=0.9, actor="itest",
+    )
+    await tools.capture_memory(
+        content="Completely unrelated database migration notes",
+        memory_type="semantic", trust_score=0.6, actor="itest",
+    )
+
+    # multi-word query matches both brown/quick memories, not the third
+    hits = await tools.search_memory(query="quick brown", actor="itest", mode="fts")
+    assert len(hits) == 2
+    assert all("rank" in h for h in hits)
+
+    # stemming: 'jumping' matches 'jumps'
+    hits = await tools.search_memory(query="jumping fox", actor="itest", mode="fts")
+    assert len(hits) == 1
+    assert "fox" in hits[0]["content"]
+
+    # websearch phrase syntax: "brown fox" adjacency excludes the packages row
+    hits = await tools.search_memory(query='"brown fox"', actor="itest", mode="fts")
+    assert len(hits) == 1
+    assert "lazy dog" in hits[0]["content"]
+
+    # no match returns empty, not everything
+    hits = await tools.search_memory(query="nonexistent zebra", actor="itest", mode="fts")
+    assert hits == []

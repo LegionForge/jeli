@@ -85,8 +85,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "name": "search_memory",
         "description": (
             "Read-only search over currently-valid memories. semantic = "
-            "vector similarity (returns distance); fts = substring, ranked "
-            "by trust then recency."
+            "vector similarity (returns distance); fts = Postgres full-text "
+            "search with websearch syntax (returns rank), ordered by "
+            "relevance, trust, recency."
         ),
         "inputSchema": {
             "type": "object",

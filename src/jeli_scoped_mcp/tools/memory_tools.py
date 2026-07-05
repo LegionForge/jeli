@@ -261,8 +261,10 @@ class MemoryTools:
         limit: int = 10,
         rerank: bool = False,
     ) -> list[dict]:
-        """Read-only search over currently-valid memories, ranked by trust
-        then recency. Set rerank=True to apply LLM re-ranking on semantic results."""
+        """Read-only search over currently-valid memories. fts = Postgres
+        full-text search (websearch query syntax), ranked by lexical relevance
+        then trust then recency; semantic = vector similarity. Set rerank=True
+        to apply LLM re-ranking on semantic results."""
         if not query or not query.strip():
             raise MemoryToolError("query must be non-empty")
         if mode not in SEARCH_MODES:
@@ -304,14 +306,21 @@ class MemoryTools:
                 candidate_limit,
             )
         else:
+            # Real Postgres FTS (GH #18): websearch_to_tsquery gives sane
+            # multi-word/quoted/negated query semantics, the expression matches
+            # the GIN index from migration 012, and ts_rank orders by lexical
+            # relevance with trust and recency as tiebreakers.
             rows = await self.db.fetchall(
                 """
                 SELECT id, content, trust_score, memory_type, created_at,
-                       created_by, source_agent, metadata
+                       created_by, source_agent, metadata,
+                       ts_rank(to_tsvector('english', content),
+                               websearch_to_tsquery('english', $1)) AS rank
                 FROM memory_entry
                 WHERE valid_until IS NULL
-                  AND content ILIKE '%' || $1 || '%'
-                ORDER BY trust_score DESC, created_at DESC
+                  AND to_tsvector('english', content)
+                      @@ websearch_to_tsquery('english', $1)
+                ORDER BY rank DESC, trust_score DESC, created_at DESC
                 LIMIT $2
                 """,
                 query,
@@ -345,6 +354,7 @@ class MemoryTools:
                     "injection_flagged": injection_flagged,
                     "content_class": content_class,
                     **({"distance": float(r["distance"])} if "distance" in r.keys() else {}),
+                    **({"rank": float(r["rank"])} if "rank" in r.keys() else {}),
                 }
             )
             await self.db.execute(
