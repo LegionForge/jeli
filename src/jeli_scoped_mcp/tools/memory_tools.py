@@ -275,8 +275,12 @@ class MemoryTools:
             )
         limit = max(1, min(int(limit), 50))
 
-        # When re-ranking, fetch a larger candidate pool to score from.
+        # When re-ranking or applying decay-sensitive ordering, fetch a larger
+        # candidate pool so lower-stored-but-fresher hits are not excluded by
+        # the initial page cut.
         candidate_limit = limit
+        if mode == "fts":
+            candidate_limit = max(limit, min(limit * 5, 50))
         if rerank and mode == "semantic":
             raw_limit = getattr(self.reranker, "candidate_limit", limit * 2)
             candidate_limit = max(limit, min(int(raw_limit), 50))
@@ -325,7 +329,7 @@ class MemoryTools:
                 LIMIT $2
                 """,
                 query,
-                limit,
+                candidate_limit,
             )
 
         now = datetime.now(UTC)
@@ -385,6 +389,7 @@ class MemoryTools:
             # created_at DESC.
             results.sort(key=lambda m: m["created_at"], reverse=True)
             results.sort(key=lambda m: (-m.get("rank", 0.0), -m["effective_trust"]))
+            results = results[:limit]
 
         if rerank and mode == "semantic" and results:
             results = await self.reranker.rerank(query, results)
