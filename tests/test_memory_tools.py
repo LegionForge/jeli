@@ -560,6 +560,18 @@ async def test_fresh_memory_effective_equals_stored(tools):
     assert hits[0]["effective_trust"] == 0.6
 
 
+async def test_fts_limit_one_uses_effective_trust_for_candidate_pool(tools, pool):
+    from datetime import timedelta
+
+    await capture(tools, content="limit one ancient", trust_score=0.85)
+    pool.memories[0]["created_at"] = datetime.now(UTC) - timedelta(days=90)
+    await capture(tools, content="limit one recent", trust_score=0.6)
+    hits = await tools.search_memory(query="limit one", actor="a", limit=1)
+    assert len(hits) == 1
+    assert "recent" in hits[0]["content"]
+    assert hits[0]["effective_trust"] > 0.5
+
+
 async def test_fts_tiebreak_uses_effective_trust(tools, pool):
     from datetime import timedelta
 
