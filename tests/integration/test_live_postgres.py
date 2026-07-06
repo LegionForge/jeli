@@ -253,3 +253,43 @@ async def test_fts_is_real_full_text_search(live_tools):
     # no match returns empty, not everything
     hits = await tools.search_memory(query="nonexistent zebra", actor="itest", mode="fts")
     assert hits == []
+
+
+async def test_search_scoping_filters(live_tools):
+    """GH #16: scope filters constrain results on real Postgres."""
+    tools, _db = live_tools
+    await tools.capture_memory(
+        content="jeli scoped deployment note",
+        memory_type="procedural", trust_score=0.9, actor="itest",
+        metadata={"project": "jeli"},
+    )
+    await tools.capture_memory(
+        content="briarios scoped deployment note",
+        memory_type="procedural", trust_score=0.9, actor="itest",
+        metadata={"project": "briarios"},
+    )
+    await tools.capture_memory(
+        content="low trust scoped deployment note",
+        memory_type="episodic", trust_score=0.3, actor="itest",
+    )
+
+    hits = await tools.search_memory(
+        query="scoped deployment", actor="itest", mode="fts", project="jeli"
+    )
+    assert [h["content"] for h in hits] == ["jeli scoped deployment note"]
+
+    hits = await tools.search_memory(
+        query="scoped deployment", actor="itest", mode="fts", min_trust=0.6
+    )
+    assert len(hits) == 2
+    assert all(h["trust_score"] >= 0.6 for h in hits)
+
+    hits = await tools.search_memory(
+        query="scoped deployment", actor="itest", mode="fts", memory_type="episodic"
+    )
+    assert len(hits) == 1
+
+    hits = await tools.search_memory(
+        query="scoped deployment", actor="itest", mode="semantic", project="briarios"
+    )
+    assert [h["content"] for h in hits] == ["briarios scoped deployment note"]

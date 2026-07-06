@@ -150,23 +150,45 @@ class FakePool:
             return None
         raise AssertionError(f"unexpected fetchrow: {query}")
 
+    @staticmethod
+    def _in_scope(m, scope):
+        """Emulate the fixed-shape NULL-tolerant scope predicate ($3-$6)."""
+        if not scope:
+            return True
+        memory_type, min_trust, content_class, project = scope
+        meta = m["metadata"]
+        if isinstance(meta, str):
+            meta = json.loads(meta)
+        meta = meta or {}
+        if memory_type is not None and m["memory_type"] != memory_type:
+            return False
+        if min_trust is not None and float(m["trust_score"]) < min_trust:
+            return False
+        if content_class is not None and meta.get("content_class") != content_class:
+            return False
+        if project is not None and meta.get("project") != project:
+            return False
+        return True
+
     async def fetchall(self, query, *args):
         if "FROM memory_audit_log" in query:
             return [a for a in self.audit if str(a["memory_id"]) == str(args[0])]
         if "<=>" in query:
-            _qvec, limit = args
-            hits = [m for m in self.memories if m["valid_until"] is None]
-            for h in hits:
-                h = dict(h)
+            _qvec, limit, *scope = args
+            hits = [
+                m
+                for m in self.memories
+                if m["valid_until"] is None and self._in_scope(m, scope)
+            ]
             return [dict(m, distance=0.0) for m in hits[:limit]]
         if "websearch_to_tsquery" in query:
             # crude tsquery emulation: every query token must appear as a
             # word in content; rank is the matched-token count
-            needle, limit = args
+            needle, limit, *scope = args
             tokens = needle.lower().split()
             hits = []
             for m in self.memories:
-                if m["valid_until"] is not None:
+                if m["valid_until"] is not None or not self._in_scope(m, scope):
                     continue
                 words = set(m["content"].lower().split())
                 if all(t in words for t in tokens):
@@ -584,3 +606,70 @@ async def test_fts_tiebreak_uses_effective_trust(tools, pool):
     assert "recent" in hits[0]["content"]
     assert "ancient" in hits[1]["content"]
     assert hits[0]["effective_trust"] > hits[1]["effective_trust"]
+
+
+# ── search scoping filters (GH #16) ──────────────────────────────────────────
+
+
+async def test_search_filters_by_memory_type(tools):
+    await capture(tools, content="scoped fact one", memory_type="preference")
+    await capture(tools, content="scoped fact two", memory_type="episodic")
+    hits = await tools.search_memory(query="scoped fact", actor="a", memory_type="episodic")
+    assert len(hits) == 1
+    assert hits[0]["memory_type"] == "episodic"
+
+
+async def test_search_filters_by_min_trust_stored(tools):
+    await capture(tools, content="trusty fact high", trust_score=0.9)
+    await capture(tools, content="trusty fact low", trust_score=0.3)
+    hits = await tools.search_memory(query="trusty fact", actor="a", min_trust=0.6)
+    assert len(hits) == 1
+    assert hits[0]["trust_score"] == 0.9
+
+
+async def test_search_min_trust_applies_to_effective_trust(tools, pool):
+    from datetime import timedelta
+
+    # stored 0.6 passes the SQL prefilter, but 60 days of decay puts the
+    # effective value (~0.33) below the floor requested here
+    await capture(tools, content="stale scoped fact", trust_score=0.6)
+    pool.memories[0]["created_at"] = datetime.now(UTC) - timedelta(days=60)
+    hits = await tools.search_memory(query="stale scoped", actor="a", min_trust=0.5)
+    assert hits == []
+    hits = await tools.search_memory(query="stale scoped", actor="a", min_trust=0.3)
+    assert len(hits) == 1
+
+
+async def test_search_filters_by_content_class(tools):
+    await capture(tools, content="classy fact plain")
+    await capture(
+        tools, content="classy fact secure", content_class="security-doc"
+    )
+    hits = await tools.search_memory(
+        query="classy fact", actor="a", content_class="security-doc"
+    )
+    assert len(hits) == 1
+    assert hits[0]["content_class"] == "security-doc"
+
+
+async def test_search_filters_by_project(tools):
+    await capture(tools, content="project fact jeli", metadata={"project": "jeli"})
+    await capture(tools, content="project fact other", metadata={"project": "briarios"})
+    await capture(tools, content="project fact unstamped")
+    hits = await tools.search_memory(query="project fact", actor="a", project="jeli")
+    assert len(hits) == 1
+    assert "jeli" in hits[0]["content"]
+
+
+async def test_search_rejects_invalid_scope_values(tools):
+    with pytest.raises(MemoryToolError, match="memory_type"):
+        await tools.search_memory(query="x", actor="a", memory_type="diary")
+    with pytest.raises(MemoryToolError, match="min_trust"):
+        await tools.search_memory(query="x", actor="a", min_trust=1.5)
+
+
+async def test_search_unscoped_returns_everything(tools):
+    await capture(tools, content="open fact one", memory_type="preference")
+    await capture(tools, content="open fact two", memory_type="episodic")
+    hits = await tools.search_memory(query="open fact", actor="a")
+    assert len(hits) == 2

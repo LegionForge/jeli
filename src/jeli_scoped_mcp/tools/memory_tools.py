@@ -261,11 +261,21 @@ class MemoryTools:
         mode: str = "fts",
         limit: int = 10,
         rerank: bool = False,
+        memory_type: str | None = None,
+        min_trust: float | None = None,
+        content_class: str | None = None,
+        project: str | None = None,
     ) -> list[dict]:
         """Read-only search over currently-valid memories. fts = Postgres
         full-text search (websearch query syntax), ranked by lexical relevance
         then trust then recency; semantic = vector similarity. Set rerank=True
-        to apply LLM re-ranking on semantic results."""
+        to apply LLM re-ranking on semantic results.
+
+        Scoping filters (GH #16): memory_type, min_trust (applied to the
+        read-time effective trust; stored trust prefilters in SQL),
+        content_class, and project (matched against metadata->>'project',
+        stamped at capture). All optional; omitted = unfiltered.
+        """
         if not query or not query.strip():
             raise MemoryToolError("query must be non-empty")
         if mode not in SEARCH_MODES:
@@ -273,6 +283,12 @@ class MemoryTools:
                 f"mode must be one of {sorted(SEARCH_MODES)} "
                 "(semantic search lands with the pgvector migration)"
             )
+        if memory_type is not None and memory_type not in VALID_MEMORY_TYPES:
+            raise MemoryToolError(f"memory_type must be one of {sorted(VALID_MEMORY_TYPES)}")
+        if min_trust is not None:
+            min_trust = float(min_trust)
+            if not 0.0 <= min_trust <= 1.0:
+                raise MemoryToolError("min_trust must be between 0.0 and 1.0")
         limit = max(1, min(int(limit), 50))
 
         # When re-ranking or applying decay-sensitive ordering, fetch a larger
@@ -284,6 +300,17 @@ class MemoryTools:
         if rerank and mode == "semantic":
             raw_limit = getattr(self.reranker, "candidate_limit", limit * 2)
             candidate_limit = max(limit, min(int(raw_limit), 50))
+
+        # Fixed-shape scope predicate: NULL filter = no constraint. Stored
+        # trust is a valid SQL prefilter for min_trust because effective
+        # trust (computed below) never exceeds it.
+        scope_sql = """
+                  AND ($3::text IS NULL OR memory_type = $3)
+                  AND ($4::float IS NULL OR trust_score >= $4)
+                  AND ($5::text IS NULL OR metadata->>'content_class' = $5)
+                  AND ($6::text IS NULL OR metadata->>'project' = $6)
+        """
+        scope_args = (memory_type, min_trust, content_class, project)
 
         if mode == "semantic":
             if self.embedder is None:
@@ -298,17 +325,19 @@ class MemoryTools:
                     f"index standard is {INDEX_DIMENSIONS}"
                 )
             rows = await self.db.fetchall(
-                """
+                f"""
                 SELECT id, content, trust_score, memory_type, created_at,
                        created_by, source_agent, metadata,
                        (embedding <=> $1::vector) AS distance
                 FROM memory_entry
                 WHERE valid_until IS NULL
+                {scope_sql}
                 ORDER BY embedding <=> $1::vector
                 LIMIT $2
-                """,
+                """,  # nosec B608 — scope_sql is a hardcoded constant
                 json.dumps(q_embedding.vector),
                 candidate_limit,
+                *scope_args,
             )
         else:
             # Real Postgres FTS (GH #18): websearch_to_tsquery gives sane
@@ -316,7 +345,7 @@ class MemoryTools:
             # the GIN index from migration 012, and ts_rank orders by lexical
             # relevance with trust and recency as tiebreakers.
             rows = await self.db.fetchall(
-                """
+                f"""
                 SELECT id, content, trust_score, memory_type, created_at,
                        created_by, source_agent, metadata,
                        ts_rank(to_tsvector('english', content),
@@ -325,11 +354,13 @@ class MemoryTools:
                 WHERE valid_until IS NULL
                   AND to_tsvector('english', content)
                       @@ websearch_to_tsquery('english', $1)
+                {scope_sql}
                 ORDER BY rank DESC, trust_score DESC, created_at DESC
                 LIMIT $2
-                """,
+                """,  # nosec B608 — scope_sql is a hardcoded constant
                 query,
                 candidate_limit,
+                *scope_args,
             )
 
         now = datetime.now(UTC)
@@ -350,6 +381,12 @@ class MemoryTools:
             created_at = r["created_at"]
             days = max(0, (now - created_at.replace(tzinfo=UTC)).days)
             effective_trust = TrustAdjustment.decay_over_time(trust, days_elapsed=days)
+
+            # min_trust means current reliability, not capture-time trust:
+            # SQL prefiltered on the stored score (a superset), the decayed
+            # value decides here.
+            if min_trust is not None and effective_trust < min_trust:
+                continue
 
             # Wrap flagged content at retrieval time so the consuming LLM
             # receives a structural signal (not stored — applied here only).
