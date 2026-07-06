@@ -13,6 +13,7 @@ the write path is Phase 3 (see TECHNICAL-SPECIFICATION.md, Next Phases).
 import hashlib
 import json
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from ..core.hash_chain import (
@@ -20,7 +21,7 @@ from ..core.hash_chain import (
     build_canonical_record,
     compute_record_hash,
 )
-from ..core.trust_score import TrustScorer
+from ..core.trust_score import TrustAdjustment, TrustScorer
 from ..database.pool import AsyncPostgresPool
 from ..embedding.provider import EmbeddingProvider
 from ..reranker.provider import NullReranker, RerankerProvider
@@ -274,8 +275,12 @@ class MemoryTools:
             )
         limit = max(1, min(int(limit), 50))
 
-        # When re-ranking, fetch a larger candidate pool to score from.
+        # When re-ranking or applying decay-sensitive ordering, fetch a larger
+        # candidate pool so lower-stored-but-fresher hits are not excluded by
+        # the initial page cut.
         candidate_limit = limit
+        if mode == "fts":
+            candidate_limit = max(limit, min(limit * 5, 50))
         if rerank and mode == "semantic":
             raw_limit = getattr(self.reranker, "candidate_limit", limit * 2)
             candidate_limit = max(limit, min(int(raw_limit), 50))
@@ -324,9 +329,10 @@ class MemoryTools:
                 LIMIT $2
                 """,
                 query,
-                limit,
+                candidate_limit,
             )
 
+        now = datetime.now(UTC)
         results = []
         for r in rows:
             r_meta = r["metadata"]
@@ -336,6 +342,14 @@ class MemoryTools:
             trust = float(r["trust_score"])
             injection_flagged = bool(r_meta.get("injection_flagged"))
             content_class = r_meta.get("content_class", "general")
+
+            # Read-time trust decay (GH #19): the stored trust_score is inside
+            # the canonical hash and attests trust *at capture time*; the
+            # current reliability of an aging, unconfirmed memory is a derived
+            # value computed here, never written back.
+            created_at = r["created_at"]
+            days = max(0, (now - created_at.replace(tzinfo=UTC)).days)
+            effective_trust = TrustAdjustment.decay_over_time(trust, days_elapsed=days)
 
             # Wrap flagged content at retrieval time so the consuming LLM
             # receives a structural signal (not stored — applied here only).
@@ -348,8 +362,9 @@ class MemoryTools:
                     "id": str(r["id"]),
                     "content": content,
                     "trust_score": trust,
+                    "effective_trust": round(effective_trust, 4),
                     "memory_type": r["memory_type"],
-                    "created_at": r["created_at"].isoformat(),
+                    "created_at": created_at.isoformat(),
                     "source": r["source_agent"] or r["created_by"],
                     "injection_flagged": injection_flagged,
                     "content_class": content_class,
@@ -366,6 +381,15 @@ class MemoryTools:
                 actor,
                 json.dumps({"query": query[:200], "mode": mode, "rerank": rerank}),
             )
+
+        if mode == "fts":
+            # SQL tiebreaks on the stored (attested) trust; the decayed value
+            # only exists at read time, so re-rank the fetched page here.
+            # Two stable sorts = ORDER BY rank DESC, effective_trust DESC,
+            # created_at DESC.
+            results.sort(key=lambda m: m["created_at"], reverse=True)
+            results.sort(key=lambda m: (-m.get("rank", 0.0), -m["effective_trust"]))
+            results = results[:limit]
 
         if rerank and mode == "semantic" and results:
             results = await self.reranker.rerank(query, results)

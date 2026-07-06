@@ -26,14 +26,14 @@ class MaintenanceDaemon:
         return results
 
     async def _apply_trust_decay(self) -> dict:
-        """Trust decay is disabled: trust_score is part of the canonical record
-        hash, so mutating it in place makes every decayed record fail
-        verify_chain — indistinguishable from tampering (GH #19). Migration 010
-        also revokes UPDATE on the column. Decay will return as a read-time
-        computation (effective_trust from age at query time), never a stored
-        mutation.
+        """Stored trust decay is permanently disabled: trust_score is part of
+        the canonical record hash, so mutating it in place makes every decayed
+        record fail verify_chain — indistinguishable from tampering (GH #19).
+        Migration 010 also revokes UPDATE on the column. Decay is a read-time
+        computation instead: search_memory returns effective_trust derived
+        from age at query time; the stored score attests trust at capture.
         """
-        return {"decayed": 0, "disabled": "stored decay breaks the hash chain (GH #19)"}
+        return {"decayed": 0, "disabled": "decay is read-time (GH #19); stored trust immutable"}
 
     async def _archive_expired(self) -> dict:
         """Move expired memories older than ARCHIVE_AFTER_DAYS to memory_archive."""
