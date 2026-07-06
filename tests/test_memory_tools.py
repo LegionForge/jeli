@@ -135,6 +135,14 @@ class FakePool:
             }
             self.state_events.append(row)
             return {"id": row["id"], "created_at": row["created_at"]}
+        if "FROM memory_state_event" in query and "event_type = 'redacted'" in query:
+            hits = [
+                e
+                for e in self.state_events
+                if str(e["target_memory_id"]) == str(args[0])
+                and e["event_type"] == "redacted"
+            ]
+            return hits[-1] if hits else None
         if "FROM memory_entry WHERE id" in query:
             for m in self.memories:
                 if str(m["id"]) == str(args[0]):
@@ -177,7 +185,10 @@ class FakePool:
             valid_until, successor, target = args
             for m in self.memories:
                 if str(m["id"]) == str(target):
-                    m["valid_until"] = valid_until
+                    if "COALESCE" in query and m.get("valid_until") is not None:
+                        pass  # already retired: keep original timestamp
+                    else:
+                        m["valid_until"] = valid_until
                     m["superseded_by"] = successor
             return
         if "SET amended_from" in query:
@@ -186,20 +197,8 @@ class FakePool:
                 if str(m["id"]) == str(target):
                     m["amended_from"] = amended_from
             return
-        # redact UPDATE: content + valid_until + metadata
-        if "UPDATE memory_entry SET" in query and "content" in query:
-            content_val, memory_id = args
-            for m in self.memories:
-                if str(m["id"]) == str(memory_id):
-                    m["content"] = content_val
-                    if m.get("valid_until") is None:
-                        m["valid_until"] = datetime.now(UTC)
-            return
         assert "INSERT INTO memory_audit_log" in query
-        if "'redacted'" in query and len(args) == 3:
-            memory_id, actor, details = args
-            action = "redacted"
-        elif "source_session" in query:
+        if "source_session" in query:
             memory_id, actor, session_id, details = args
             action = "created" if "'created'" in query else "searched"
         elif len(args) == 4:
@@ -521,42 +520,5 @@ async def test_summarize_session_chains_into_hash_chain(tools, pool):
     assert pool.memories[1]["prev_hash"] == pool.memories[0]["record_hash"]
 
 
-# ── redact ───────────────────────────────────────────────────────────────────
-
-
-async def test_redact_zeroes_content(tools, pool):
-    receipt = await capture(tools, content="sensitive personal note")
-    result = await tools.redact(
-        memory_id=receipt["id"], reason="user requested removal", actor="jp"
-    )
-    assert result["redacted"] is True
-    assert "[REDACTED" in pool.memories[0]["content"]
-    assert result["original_hash_preserved"] == receipt["record_hash"]
-
-
-async def test_redact_marks_valid_until(tools, pool):
-    receipt = await capture(tools, content="sensitive fact")
-    assert pool.memories[0]["valid_until"] is None
-    await tools.redact(memory_id=receipt["id"], reason="privacy", actor="jp")
-    assert pool.memories[0]["valid_until"] is not None
-
-
-async def test_redact_writes_audit_log(tools, pool):
-    receipt = await capture(tools, content="to be redacted")
-    await tools.redact(memory_id=receipt["id"], reason="test reason", actor="jp")
-    redacted_events = [a for a in pool.audit if a["action"] == "redacted"]
-    assert len(redacted_events) == 1
-    details = json.loads(redacted_events[0]["details"])
-    assert details["reason"] == "test reason"
-    assert "original_hash" in details
-
-
-async def test_redact_unknown_id_raises(tools):
-    with pytest.raises(MemoryToolError, match="not found"):
-        await tools.redact(memory_id=str(uuid.uuid4()), reason="reason", actor="jp")
-
-
-async def test_redact_empty_reason_raises(tools):
-    receipt = await capture(tools, content="fact")
-    with pytest.raises(MemoryToolError, match="reason is required"):
-        await tools.redact(memory_id=receipt["id"], reason="   ", actor="jp")
+# Redaction moved to StateTools (chained event, read-time masking — GH #13);
+# see tests/test_state_tools.py.

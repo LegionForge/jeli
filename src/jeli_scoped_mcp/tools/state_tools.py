@@ -1,4 +1,4 @@
-"""User-tier temporal state operations: revise and invalidate.
+"""User-tier temporal state operations: revise, invalidate, and redact.
 
 Per the spec these are USER-ONLY — they are deliberately NOT exposed as MCP
 tools (agents propose; humans retire truth). Every state change is recorded
@@ -65,6 +65,24 @@ class StateTools:
     async def invalidate(self, memory_id: str, reason: str, actor: str) -> dict:
         """Retire a memory (never delete): chained event + valid_until cache."""
         return await self._apply_event("invalidated", memory_id, None, reason, actor)
+
+    async def redact(self, memory_id: str, reason: str, actor: str) -> dict:
+        """Redact a memory: chained event; content is masked at read time.
+
+        The stored row is never rewritten — content is part of the canonical
+        hash, so an in-place rewrite would make the record indistinguishable
+        from tampering (GH #13). Instead the redaction is a chained state
+        event; audit_trail masks content for records with a redaction event,
+        and the valid_until cache keeps the record out of search results.
+
+        Known limitation (documented in THREAT-MODEL): the plaintext remains
+        on disk inside the row. True content destruction needs a defined
+        re-hash protocol (chain-key-signed tombstone) — follow-up work.
+        Redacting an already-retired memory is allowed.
+        """
+        return await self._apply_event(
+            "redacted", memory_id, None, reason, actor, allow_retired=True
+        )
 
     async def revise(
         self,
@@ -177,6 +195,7 @@ class StateTools:
         successor_id: str | None,
         reason: str,
         actor: str,
+        allow_retired: bool = False,
     ) -> dict:
         if not reason or not reason.strip():
             raise MemoryToolError("a reason is required — state changes are receipts")
@@ -185,12 +204,18 @@ class StateTools:
 
         async with self.db.locked_transaction(STATE_CHAIN_LOCK) as conn:
             target = await conn.fetchrow(
-                "SELECT id, valid_until FROM memory_entry WHERE id = $1", target_id
+                "SELECT id, valid_until, superseded_by FROM memory_entry WHERE id = $1",
+                target_id,
             )
             if target is None:
                 raise MemoryToolError(f"memory {target_id} not found")
-            if target["valid_until"] is not None:
+            if target["valid_until"] is not None and not allow_retired:
                 raise MemoryToolError(f"memory {target_id} is already retired")
+            if allow_retired and successor_id is None and target["superseded_by"]:
+                # Carry the existing successor into this event so verify()'s
+                # latest-event-vs-columns cross-check stays consistent when a
+                # superseded memory is later redacted.
+                successor_id = str(target["superseded_by"])
 
             prev_hash = await conn.fetchval(
                 "SELECT record_hash FROM memory_state_event " "ORDER BY chain_seq DESC LIMIT 1"
@@ -224,9 +249,12 @@ class StateTools:
                 record_hash,
                 self.key_id,
             )
-            # cache columns (authority is the event just chained)
+            # cache columns (authority is the event just chained); COALESCE
+            # preserves the original retirement timestamp when redacting an
+            # already-retired memory.
             await conn.execute(
-                "UPDATE memory_entry SET valid_until = $1, superseded_by = $2 " "WHERE id = $3",
+                "UPDATE memory_entry SET valid_until = COALESCE(valid_until, $1), "
+                "superseded_by = $2 WHERE id = $3",
                 valid_until,
                 successor_id,
                 target_id,
