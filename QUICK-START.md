@@ -1,3 +1,5 @@
+<!-- ARCHIVED 2026-07-06: superseded by implementation — see README for current state -->
+
 # Jeli Quick Start: Next 48 Hours
 
 **For JP to decide:** Proceed with Phase 1 PoC? (2-4 weeks, ~40 hours dev time)

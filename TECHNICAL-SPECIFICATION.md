@@ -1,3 +1,5 @@
+<!-- ARCHIVED 2026-07-06: superseded by implementation — see README for current state -->
+
 # Jeli Technical Specification: Tiered Storage + Security Architecture
 
 **Version:** 1.0-draft  

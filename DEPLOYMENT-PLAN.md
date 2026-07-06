@@ -1,3 +1,5 @@
+<!-- ARCHIVED 2026-07-06: superseded by implementation — see README for current state -->
+
 # Jeli Deployment Plan: Local Sovereign Memory
 
 **Version:** 1.0-draft  
