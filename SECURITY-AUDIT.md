@@ -1,3 +1,5 @@
+<!-- ARCHIVED 2026-07-06: superseded by implementation — Phase 1 core has since shipped and the security gaps flagged here (Judicial layer, encryption at rest, etc.) have been substantially addressed by GH #9-#30; see docs/THREAT-MODEL.md for the current, maintained threat model -->
+
 # Jeli Security Audit & Red-Team Analysis
 
 **Date:** 2026-05-18  

@@ -1,3 +1,5 @@
+<!-- ARCHIVED 2026-07-06: superseded by implementation — see README for current state -->
+
 # Jeli: Investigation Findings & Implementation Roadmap
 
 **Date:** 2026-06-06  
