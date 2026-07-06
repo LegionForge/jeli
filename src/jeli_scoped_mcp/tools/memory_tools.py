@@ -324,7 +324,7 @@ class MemoryTools:
                     f"query embedding is {q_embedding.dimensions}-dim; the "
                     f"index standard is {INDEX_DIMENSIONS}"
                 )
-            rows = await self.db.fetchall(  # nosec B608 — scope_sql is a hardcoded constant
+            rows = await self.db.fetchall(
                 f"""
                 SELECT id, content, trust_score, memory_type, created_at,
                        created_by, source_agent, metadata,
@@ -334,7 +334,7 @@ class MemoryTools:
                 {scope_sql}
                 ORDER BY embedding <=> $1::vector
                 LIMIT $2
-                """,
+                """,  # nosec B608 — scope_sql is a hardcoded constant
                 json.dumps(q_embedding.vector),
                 candidate_limit,
                 *scope_args,
@@ -344,7 +344,7 @@ class MemoryTools:
             # multi-word/quoted/negated query semantics, the expression matches
             # the GIN index from migration 012, and ts_rank orders by lexical
             # relevance with trust and recency as tiebreakers.
-            rows = await self.db.fetchall(  # nosec B608 — scope_sql is a hardcoded constant
+            rows = await self.db.fetchall(
                 f"""
                 SELECT id, content, trust_score, memory_type, created_at,
                        created_by, source_agent, metadata,
@@ -357,7 +357,7 @@ class MemoryTools:
                 {scope_sql}
                 ORDER BY rank DESC, trust_score DESC, created_at DESC
                 LIMIT $2
-                """,
+                """,  # nosec B608 — scope_sql is a hardcoded constant
                 query,
                 candidate_limit,
                 *scope_args,
