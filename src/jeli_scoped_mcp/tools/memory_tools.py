@@ -24,7 +24,7 @@ from ..core.trust_score import TrustScorer
 from ..database.pool import AsyncPostgresPool
 from ..embedding.provider import EmbeddingProvider
 from ..reranker.provider import NullReranker, RerankerProvider
-from ..security import InjectionDefense
+from ..security import VALID_CONTENT_CLASSES, InjectionDefense
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +122,10 @@ class MemoryTools:
             raise MemoryToolError(f"memory_type must be one of {sorted(VALID_MEMORY_TYPES)}")
         if not actor:
             raise MemoryToolError("actor is required for provenance")
+        if content_class not in VALID_CONTENT_CLASSES:
+            raise MemoryToolError(
+                f"content_class must be one of {sorted(VALID_CONTENT_CLASSES)}"
+            )
         if self.embedder is None:
             raise MemoryToolError("no embedding provider configured (read-only mode)")
 
@@ -260,9 +264,18 @@ class MemoryTools:
         mode: str = "fts",
         limit: int = 10,
         rerank: bool = False,
+        memory_type: str | None = None,
+        min_trust: float | None = None,
+        content_class: str | None = None,
     ) -> list[dict]:
         """Read-only search over currently-valid memories, ranked by trust
-        then recency. Set rerank=True to apply LLM re-ranking on semantic results."""
+        then recency. Set rerank=True to apply LLM re-ranking on semantic results.
+
+        Optional scoping filters (GH #16):
+          memory_type   — one of the VALID_MEMORY_TYPES
+          min_trust     — minimum trust_score [0.3, 1.0]
+          content_class — one of the VALID_CONTENT_CLASSES
+        """
         if not query or not query.strip():
             raise MemoryToolError("query must be non-empty")
         if mode not in SEARCH_MODES:
@@ -270,6 +283,16 @@ class MemoryTools:
                 f"mode must be one of {sorted(SEARCH_MODES)} "
                 "(semantic search lands with the pgvector migration)"
             )
+        if memory_type is not None and memory_type not in VALID_MEMORY_TYPES:
+            raise MemoryToolError(f"memory_type must be one of {sorted(VALID_MEMORY_TYPES)}")
+        if content_class is not None and content_class not in VALID_CONTENT_CLASSES:
+            raise MemoryToolError(
+                f"content_class must be one of {sorted(VALID_CONTENT_CLASSES)}"
+            )
+        if min_trust is not None:
+            valid, err = TrustScorer.validate(float(min_trust))
+            if not valid:
+                raise MemoryToolError(err or "invalid min_trust")
         limit = max(1, min(int(limit), 50))
 
         # When re-ranking, fetch a larger candidate pool to score from.
@@ -290,32 +313,44 @@ class MemoryTools:
                     f"query embedding is {q_embedding.dimensions}-dim; the "
                     f"index standard is {INDEX_DIMENSIONS}"
                 )
+            filter_sql, filter_params = self._build_scope_filters(
+                memory_type, min_trust, content_class, start_idx=3
+            )
             rows = await self.db.fetchall(
-                """
+                f"""
                 SELECT id, content, trust_score, memory_type, created_at,
                        created_by, source_agent, metadata,
                        (embedding <=> $1::vector) AS distance
                 FROM memory_entry
                 WHERE valid_until IS NULL
+                {filter_sql}
                 ORDER BY embedding <=> $1::vector
                 LIMIT $2
                 """,
                 json.dumps(q_embedding.vector),
                 candidate_limit,
+                *filter_params,
             )
         else:
+            filter_sql, filter_params = self._build_scope_filters(
+                memory_type, min_trust, content_class, start_idx=3
+            )
             rows = await self.db.fetchall(
-                """
+                f"""
                 SELECT id, content, trust_score, memory_type, created_at,
                        created_by, source_agent, metadata
                 FROM memory_entry
                 WHERE valid_until IS NULL
-                  AND content ILIKE '%' || $1 || '%'
-                ORDER BY trust_score DESC, created_at DESC
+                  AND to_tsvector('english', content) @@ plainto_tsquery('english', $1)
+                {filter_sql}
+                ORDER BY ts_rank(to_tsvector('english', content),
+                                 plainto_tsquery('english', $1)) DESC,
+                         trust_score DESC, created_at DESC
                 LIMIT $2
                 """,
                 query,
                 limit,
+                *filter_params,
             )
 
         results = []
@@ -526,7 +561,7 @@ class MemoryTools:
 
     async def verify_chain(self) -> dict:
         """Walk the full chain oldest→newest, recomputing every hash.
-        Returns validity plus the first tampered record id, if any."""
+        Returns validity, redacted-record count, and the first tampered id."""
         rows = await self.db.fetchall("""
             SELECT id, content, embedding_model, embedding_dimensions,
                    metadata, trust_score, memory_type, prev_hash, record_hash,
@@ -534,19 +569,64 @@ class MemoryTools:
             FROM memory_entry ORDER BY chain_seq ASC
             """)
         prev_hash: str | None = None
+        redacted = 0
         for row in rows:
+            meta = row["metadata"]
+            if isinstance(meta, str):
+                meta = json.loads(meta)
+            meta = meta or {}
+            if meta.get("redacted") and isinstance(row["content"], str) and row["content"].startswith("[REDACTED"):
+                # Content was intentionally replaced by redact() — hash won't match by
+                # design. Treat as a known-valid state change; advance the chain pointer
+                # using the stored (original) record_hash so downstream records verify.
+                redacted += 1
+                prev_hash = row["record_hash"]
+                continue
             if not self._verify_row(row, prev_hash=prev_hash, chain_walk=True):
                 return {
                     "chain_valid": False,
                     "records_checked": len(rows),
+                    "redacted_records": redacted,
                     "first_bad_record": str(row["id"]),
                 }
             prev_hash = row["record_hash"]
         return {
             "chain_valid": True,
             "records_checked": len(rows),
+            "redacted_records": redacted,
             "first_bad_record": None,
         }
+
+    # ── helpers ──────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _build_scope_filters(
+        memory_type: str | None,
+        min_trust: float | None,
+        content_class: str | None,
+        start_idx: int = 3,
+    ) -> tuple[str, list]:
+        """Build SQL AND clauses + positional params for optional search filters.
+
+        start_idx is the next $N to use (caller already consumed $1=query, $2=limit).
+        Returns (sql_fragment, params_list) — the fragment is '' when no filters.
+        """
+        parts: list[str] = []
+        params: list = []
+        idx = start_idx
+        if memory_type is not None:
+            parts.append(f"AND memory_type = ${idx}")
+            params.append(memory_type)
+            idx += 1
+        if min_trust is not None:
+            parts.append(f"AND trust_score >= ${idx}")
+            params.append(float(min_trust))
+            idx += 1
+        if content_class is not None:
+            parts.append(f"AND metadata->>'content_class' = ${idx}")
+            params.append(content_class)
+            idx += 1
+        return ("\n                ".join(parts), params)
 
     # ── retrieval wrapper ─────────────────────────────────────────────────────
 
@@ -567,8 +647,6 @@ class MemoryTools:
                 content_class=content_class, trust=trust, content=content
             )
         return _WRAP_QUARANTINE.format(trust=trust, content=content)
-
-    # ── helpers ──────────────────────────────────────────────────────────────
 
     def _verify_row(
         self,

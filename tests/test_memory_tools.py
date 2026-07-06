@@ -146,18 +146,20 @@ class FakePool:
         if "FROM memory_audit_log" in query:
             return [a for a in self.audit if str(a["memory_id"]) == str(args[0])]
         if "<=>" in query:
-            _qvec, limit = args
+            # args: (query_vec, limit, *filter_params)
+            _qvec, limit, *filter_params = args
             hits = [m for m in self.memories if m["valid_until"] is None]
-            for h in hits:
-                h = dict(h)
+            hits = self._apply_fake_filters(hits, query, filter_params)
             return [dict(m, distance=0.0) for m in hits[:limit]]
-        if "ILIKE" in query:
-            needle, limit = args
+        if "plainto_tsquery" in query or "ILIKE" in query:
+            # args: (query_text, limit, *filter_params)
+            needle, limit, *filter_params = args
             hits = [
                 m
                 for m in self.memories
                 if m["valid_until"] is None and needle.lower() in m["content"].lower()
             ]
+            hits = self._apply_fake_filters(hits, query, filter_params)
             hits.sort(key=lambda m: (-float(m["trust_score"]), m["created_at"]))
             return hits[:limit]
         if "FROM memory_state_event ORDER BY chain_seq ASC" in query:
@@ -171,6 +173,25 @@ class FakePool:
         if "ORDER BY chain_seq ASC" in query:
             return list(self.memories)
         raise AssertionError(f"unexpected fetchall: {query}")
+
+    @staticmethod
+    def _apply_fake_filters(hits: list, query: str, filter_params: list) -> list:
+        """Apply scope filter params in SQL positional order ($3, $4, $5…)."""
+        # Parse which filters are present from the SQL fragment.
+        remaining = list(filter_params)
+        if "memory_type = $" in query:
+            val = remaining.pop(0)
+            hits = [m for m in hits if m["memory_type"] == val]
+        if "trust_score >= $" in query:
+            val = remaining.pop(0)
+            hits = [m for m in hits if float(m["trust_score"]) >= float(val)]
+        if "content_class" in query and remaining:
+            val = remaining.pop(0)
+            hits = [
+                m for m in hits
+                if (json.loads(m["metadata"]) if isinstance(m["metadata"], str) else (m["metadata"] or {})).get("content_class") == val
+            ]
+        return hits
 
     async def execute(self, query, *args):
         if "SET valid_until" in query:
@@ -186,7 +207,7 @@ class FakePool:
                 if str(m["id"]) == str(target):
                     m["amended_from"] = amended_from
             return
-        # redact UPDATE: content + valid_until + metadata
+        # redact UPDATE: content + valid_until + metadata (mirrors jsonb_set in real SQL)
         if "UPDATE memory_entry SET" in query and "content" in query:
             content_val, memory_id = args
             for m in self.memories:
@@ -194,6 +215,12 @@ class FakePool:
                     m["content"] = content_val
                     if m.get("valid_until") is None:
                         m["valid_until"] = datetime.now(UTC)
+                    meta = m.get("metadata")
+                    if isinstance(meta, str):
+                        meta = json.loads(meta)
+                    meta = dict(meta or {})
+                    meta["redacted"] = True
+                    m["metadata"] = json.dumps(meta)
             return
         assert "INSERT INTO memory_audit_log" in query
         if "'redacted'" in query and len(args) == 3:
@@ -374,11 +401,10 @@ async def test_audit_trail_unknown_id(tools):
 
 async def test_verify_chain_empty(tools):
     result = await tools.verify_chain()
-    assert result == {
-        "chain_valid": True,
-        "records_checked": 0,
-        "first_bad_record": None,
-    }
+    assert result["chain_valid"] is True
+    assert result["records_checked"] == 0
+    assert result["first_bad_record"] is None
+    assert result["redacted_records"] == 0
 
 
 async def test_verify_chain_intact(tools):
@@ -387,6 +413,7 @@ async def test_verify_chain_intact(tools):
     result = await tools.verify_chain()
     assert result["chain_valid"] is True
     assert result["records_checked"] == 5
+    assert result["redacted_records"] == 0
 
 
 async def test_verify_chain_detects_content_tamper(tools, pool):
@@ -560,3 +587,68 @@ async def test_redact_empty_reason_raises(tools):
     receipt = await capture(tools, content="fact")
     with pytest.raises(MemoryToolError, match="reason is required"):
         await tools.redact(memory_id=receipt["id"], reason="   ", actor="jp")
+
+
+# ── verify_chain after redaction (GH #13) ────────────────────────────────────
+
+
+async def test_verify_chain_passes_after_redact(tools, pool):
+    """verify_chain should not flag a legitimately redacted record as tampered."""
+    await capture(tools, content="fact before redaction")
+    receipt = await capture(tools, content="PII to remove")
+    await capture(tools, content="fact after redaction")
+    await tools.redact(memory_id=receipt["id"], reason="privacy", actor="jp")
+    result = await tools.verify_chain()
+    assert result["chain_valid"] is True
+    assert result["redacted_records"] == 1
+    assert result["records_checked"] == 3
+
+
+async def test_verify_chain_still_detects_tamper_after_redact(tools, pool):
+    """A tampered non-redacted record must still fail even when redacted records exist."""
+    await capture(tools, content="fact one")
+    receipt = await capture(tools, content="PII content")
+    await capture(tools, content="fact three")
+    await tools.redact(memory_id=receipt["id"], reason="privacy", actor="jp")
+    pool.memories[2]["content"] = "poisoned content"
+    result = await tools.verify_chain()
+    assert result["chain_valid"] is False
+    assert result["redacted_records"] == 1
+
+
+# ── capture content_class validation (GH #15) ────────────────────────────────
+
+
+async def test_capture_rejects_invalid_content_class(tools):
+    with pytest.raises(MemoryToolError, match="content_class must be one of"):
+        await capture(tools, content_class="malicious-class")
+
+
+async def test_capture_accepts_valid_content_classes(tools):
+    for cls in ("general", "security-doc", "code-sample", "external-untrusted"):
+        result = await capture(tools, content=f"content for {cls}", content_class=cls)
+        assert result["content_class"] == cls
+
+
+# ── search_memory scoping filters (GH #16) ───────────────────────────────────
+
+
+async def test_search_filter_by_memory_type(tools):
+    await capture(tools, content="identity fact", memory_type="identity")
+    await capture(tools, content="preference fact", memory_type="preference")
+    hits = await tools.search_memory(query="fact", actor="a", memory_type="identity")
+    assert all(h["memory_type"] == "identity" for h in hits)
+    assert len(hits) == 1
+
+
+async def test_search_filter_by_min_trust(tools):
+    await capture(tools, content="low trust fact", trust_score=0.3)
+    await capture(tools, content="high trust fact", trust_score=0.9)
+    hits = await tools.search_memory(query="fact", actor="a", min_trust=0.8)
+    assert all(h["trust_score"] >= 0.8 for h in hits)
+    assert len(hits) == 1
+
+
+async def test_search_rejects_invalid_filter_memory_type(tools):
+    with pytest.raises(MemoryToolError):
+        await tools.search_memory(query="x", actor="a", memory_type="bogus")

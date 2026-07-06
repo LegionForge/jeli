@@ -85,8 +85,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "name": "search_memory",
         "description": (
             "Read-only search over currently-valid memories. semantic = "
-            "vector similarity (returns distance); fts = substring, ranked "
-            "by trust then recency."
+            "vector similarity (returns distance); fts = full-text search, "
+            "ranked by relevance then trust. Optional scoping: memory_type, "
+            "min_trust, content_class."
         ),
         "inputSchema": {
             "type": "object",
@@ -105,6 +106,27 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "Re-rank results using LLM relevance scoring (slower but "
                         "more accurate). Only applies to mode=semantic."
                     ),
+                },
+                "memory_type": {
+                    "type": "string",
+                    "enum": [
+                        "preference",
+                        "identity",
+                        "episodic",
+                        "semantic",
+                        "procedural",
+                        "transient",
+                    ],
+                    "description": "Restrict results to this memory type.",
+                },
+                "min_trust": {
+                    "type": "number",
+                    "description": "Only return memories with trust_score >= this value.",
+                },
+                "content_class": {
+                    "type": "string",
+                    "enum": sorted(VALID_CONTENT_CLASSES),
+                    "description": "Restrict results to this content class.",
                 },
             },
             "required": ["query"],
@@ -228,6 +250,9 @@ class ScopedMCPServer:
                 mode=arguments.get("mode", "semantic"),
                 limit=arguments.get("limit", 10),
                 rerank=arguments.get("rerank", False),
+                memory_type=arguments.get("memory_type"),
+                min_trust=arguments.get("min_trust"),
+                content_class=arguments.get("content_class"),
             )
         if name == "audit_trail":
             return await self.tools.audit_trail(memory_id=arguments["memory_id"], actor=actor)
