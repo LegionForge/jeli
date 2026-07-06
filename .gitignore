@@ -9,3 +9,4 @@ htmlcov/
 .env
 __pycache__/
 backups/
+.venv/
