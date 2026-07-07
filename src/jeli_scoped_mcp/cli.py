@@ -525,13 +525,15 @@ async def _run_constitutional(settings: Settings, args) -> Any:
             ]
         if args.constitutional_cmd == "revoke":
             return await mgr.revoke_rule(db, args.rule_id)
-        # verify
-        rules = await mgr.load_active_rules(db)
+        # verify — all rules ever signed, revoked included: a tampered retired
+        # rule is just as much an integrity breach as a tampered active one
+        rules = await mgr.load_all_rules(db)
         tampered = [
             r.id for r in rules if not await mgr.verify_rule(r, settings.chain_key)
         ]
         return {
             "rules_checked": len(rules),
+            "revoked_checked": sum(1 for r in rules if r.revoked_at is not None),
             "tampered": tampered,
             "all_valid": not tampered,
         }

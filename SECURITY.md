@@ -89,7 +89,8 @@ The Constitutional layer is the inviolable floor: **user-only**, hash-chained,
 and enforced by architecture. Agents can never create, edit, or revoke a rule —
 the CLI (`jeli constitutional add/list/revoke/verify`) is a user-tier surface,
 not an MCP tool. Rules are retired, never deleted; `constitutional verify`
-recomputes each rule's HMAC and reports any tampering.
+recomputes each rule's HMAC — revoked rules included, since retired history
+must stay tamper-evident too — and reports any tampering.
 
 Two gates enforce rules:
 

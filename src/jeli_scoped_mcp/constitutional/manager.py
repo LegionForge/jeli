@@ -123,6 +123,23 @@ class ConstitutionalManager:
         )
         return [self._row_to_rule(r) for r in rows]
 
+    async def load_all_rules(self, db: AsyncPostgresPool) -> list[ConstitutionalRule]:
+        """Every rule ever signed, revoked included — for verification.
+
+        A revoked rule is retired history, not deleted history: its HMAC must
+        still verify, otherwise tampering with the retired record would be
+        undetectable. Uncached — verification always reads the DB.
+        """
+        rows = await db.fetchall(
+            """
+            SELECT id, rule_type, parameters, description, applies_to,
+                   active, created_at, revoked_at, rule_hash, key_id
+            FROM constitutional_rules
+            ORDER BY created_at ASC
+            """
+        )
+        return [self._row_to_rule(r) for r in rows]
+
     def invalidate_cache(self) -> None:
         """Force the next load_active_rules to hit the DB.
 

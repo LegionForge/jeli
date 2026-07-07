@@ -166,7 +166,9 @@ class FakePool:
 
     async def fetchall(self, query, *args):
         assert "FROM constitutional_rules" in query
-        return [r for r in self.rules if r["revoked_at"] is None and r["active"]]
+        if "revoked_at IS NULL" in query:
+            return [r for r in self.rules if r["revoked_at"] is None and r["active"]]
+        return list(self.rules)  # load_all_rules: revoked included
 
     async def execute(self, query, *args):
         assert "UPDATE constitutional_rules" in query
@@ -205,6 +207,47 @@ async def test_revoke_unknown_rule():
     mgr = ConstitutionalManager()
     with pytest.raises(ConstitutionalError, match="not found or already revoked"):
         await mgr.revoke_rule(pool, str(uuid.uuid4()))
+
+
+async def test_load_all_rules_includes_revoked():
+    """A revoked rule stays visible to verification and still verifies."""
+    pool = FakePool()
+    mgr = ConstitutionalManager()
+    added = await mgr.add_rule(
+        pool,
+        chain_key=CHAIN_KEY,
+        key_id="k1",
+        rule_type="min_trust_floor",
+        parameters={"floor": 0.5},
+        description="floor rule",
+    )
+    await mgr.revoke_rule(pool, added["id"])
+
+    assert await mgr.list_rules(pool) == []  # gone from the active view
+    all_rules = await mgr.load_all_rules(pool)
+    assert len(all_rules) == 1
+    assert all_rules[0].revoked_at is not None
+    # Retired history must still verify — revocation is not license to tamper.
+    assert await mgr.verify_rule(all_rules[0], CHAIN_KEY) is True
+
+
+async def test_load_all_rules_detects_tampered_revoked_rule():
+    """Tampering with a revoked rule's stored parameters is detectable."""
+    pool = FakePool()
+    mgr = ConstitutionalManager()
+    added = await mgr.add_rule(
+        pool,
+        chain_key=CHAIN_KEY,
+        key_id="k1",
+        rule_type="exclude_tag",
+        parameters={"tag": "secret"},
+        description="tag rule",
+    )
+    await mgr.revoke_rule(pool, added["id"])
+    pool.rules[0]["parameters"] = {"tag": "harmless"}  # tamper post-revocation
+
+    (rule,) = await mgr.load_all_rules(pool)
+    assert await mgr.verify_rule(rule, CHAIN_KEY) is False
 
 
 async def test_add_rule_rejects_bad_type():
