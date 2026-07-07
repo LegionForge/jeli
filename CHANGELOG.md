@@ -1,5 +1,50 @@
 # Changelog
 
+## v0.2.0-alpha — 2026-07-06
+
+The three-branch governance model lands: a user-signed Constitutional layer,
+a Judicial precedent system, and the poisoning defenses (LLM second-pass
+classifier, entity graph, portability) that make the store both harder to
+corrupt and impossible to lock in.
+
+### Added
+- **Constitutional layer** (alembic 013) — user-signed, hash-chained rules that
+  no agent can override. `WriteGate` denies writes by `memory_type` or caps
+  trust by `content_class` before a record is hashed; `ReadGate` filters what
+  leaves the store. `jeli constitutional add/list/revoke/verify` (rules are
+  retired, never deleted; tampering is detectable).
+- **Judicial precedent system** (alembic 014) — settled conflicts become case
+  law the conflict resolver consults; unresolvable conflicts go to a human
+  escalation queue. `jeli judicial precedents/pending/resolve`.
+- **Entity graph** (alembic 015) — `EntityExtractor` runs on every capture;
+  `GraphStore` backs two new MCP tools (`search_by_entity`, `get_entity_graph`)
+  and `jeli graph entities/search/relations`.
+- **Memory portability** — `jeli export` / `jeli import` stream the store as a
+  JSON-Lines archive (optional audit trail, trust/type filters, `--dry-run`).
+  Sovereignty-preserving: move your memories out with no vendor lock-in.
+- **LLM injection classifier** (GH #33) — opt-in async second pass after the
+  regex screen, catching natural-language evasions the patterns miss. Fails
+  open, skips authoritative sources, gated behind the `[llm]` extra.
+- **Insights daemon cluster synthesis** — the nightly cluster scan can
+  synthesize a summary memory per semantic cluster via an LLM (degrades to a
+  non-LLM summary when unavailable).
+- **Contradiction surfacing** — conflicts the resolver cannot settle are
+  surfaced rather than silently dropped.
+- `jeli verify --report` — full integrity health report (chain + state-chain
+  validity, cache consistency, memory/trust/queue stats) as JSON.
+- Server-side `content_class` stigmatisation — externally-sourced content is
+  forced to `external-untrusted` regardless of what the agent claimed.
+- Integration-test infrastructure: `docker-compose.test.yml` +
+  `scripts/run_integration_tests.sh` for one-command local live-Postgres runs.
+
+### Changed
+- `capture_memory` runs the write path through the Constitutional `WriteGate`
+  and the optional LLM classifier before hashing.
+
+### Security
+- GH #33: documented the regex injection detector's natural-language evasion
+  gap and closed it with the opt-in LLM second-pass classifier.
+
 ## v0.1.1 — 2026-07-04
 
 ### Added

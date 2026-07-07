@@ -305,6 +305,27 @@ python -m jeli_scoped_mcp            # stdio MCP server
 jeli verify                          # walk the chain, report first tampered record
 ```
 
+### New in v0.2.0-alpha
+
+The three-branch governance model and the poisoning defenses are now usable from the CLI:
+
+1. **Constitutional layer** — user-signed, hash-chained constraints that no agent can override. `jeli constitutional list` shows active rules; `jeli constitutional add` signs a new one (e.g. cap external content at trust 0.3, or deny agent writes of a memory type):
+   ```bash
+   jeli constitutional add --rule-type max_trust_for_content_class \
+     --parameters '{"content_class":"external","max_trust":0.3}' \
+     --description "External content capped at 0.3 trust"
+   ```
+
+2. **Judicial precedent** — settled contradictions become case law. `jeli judicial precedents` lists resolved conflicts; `jeli judicial pending` shows conflicts escalated for human review; `jeli judicial resolve --entry-id <id> --resolution <ruling>` resolves one.
+
+3. **Entity graph** — every `capture_memory` now auto-extracts entities (people, projects, organizations, technologies). `jeli graph entities` lists known entities; `jeli graph search --entity "JP Cruz"` finds every memory mentioning someone; `jeli graph relations --entity "Jeli"` shows an entity's relations and linked-memory count.
+
+4. **Memory portability** — `jeli export > backup.jsonl` streams your store (metadata, no raw vectors) to a sovereignty-preserving JSON-Lines archive; `jeli import backup.jsonl` re-imports it with SHA-256 tamper detection and provenance stamping (re-embedding locally, chaining into a fresh chain).
+
+5. **Operational** — `jeli verify --report` produces a full integrity health report (chain + state-chain validity, cache consistency, trust/queue stats); `jeli re-embed` re-embeds stale records after an embedding-model change; `jeli decay-report` lists memories whose effective trust has decayed significantly from their stored score.
+
+> The optional LLM injection classifier (Layer 2 of the injection defense) ships behind the `[llm]` extra: `pip install -e ".[llm]"`. It fails open and only screens sources below trust 0.8. See [SECURITY.md](SECURITY.md) §5.
+
 ## Configuration
 
 | Env var | Default | Purpose |
