@@ -378,3 +378,38 @@ class TestTwoAxisTrust:
         )
         assert flagged is True
         assert override is None
+
+
+# ── validate_sql_query — uncovered branches ───────────────────────────────────
+
+
+class TestValidateSqlQueryBranches:
+    def test_empty_query_raises(self):
+        with pytest.raises(ValueError, match="empty"):
+            InjectionDefense.validate_sql_query("")
+
+    def test_update_keyword_raises(self):
+        # UPDATE is not in SQL_DANGEROUS_PATTERNS (no drop/delete/union pattern),
+        # but IS in the suspicious keyword set — exercises line 126.
+        with pytest.raises(ValueError, match="UPDATE"):
+            InjectionDefense.validate_sql_query("UPDATE content SET content = 'x'")
+
+    def test_insert_keyword_raises(self):
+        with pytest.raises(ValueError, match="INSERT"):
+            InjectionDefense.validate_sql_query("INSERT INTO memory_entry VALUES ('x')")
+
+
+# ── validate_api_key convenience function ─────────────────────────────────────
+
+
+class TestValidateApiKeyConvenienceFunction:
+    def test_valid_key(self):
+        from jeli_scoped_mcp.security import validate_api_key
+
+        key = "supersecretkey1234567890"
+        assert validate_api_key(key, key) is True
+
+    def test_invalid_key(self):
+        from jeli_scoped_mcp.security import validate_api_key
+
+        assert validate_api_key("wrong", "right") is False
