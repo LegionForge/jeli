@@ -324,7 +324,6 @@ async def test_dispatch_audit_trail():
 
 async def test_dispatch_search_by_entity_with_active_rules():
     """When constitutional rules are active, ReadGate.apply is called (line 343)."""
-    import json as _json
     from datetime import UTC, datetime
 
     rule_row = {

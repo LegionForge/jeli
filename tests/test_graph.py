@@ -43,15 +43,15 @@ class TestEntityExtractor:
     def test_extract_url_as_organization(self):
         results = self.ex.extract("See https://github.com/LegionForge for details.")
         names = [r["name"] for r in results]
-        assert "github.com" in names
+        assert any(n == "github.com" for n in names)
         org = next(r for r in results if r["name"] == "github.com")
         assert org["entity_type"] == "organization"
 
     def test_extract_url_strips_www(self):
         results = self.ex.extract("Visit https://www.example.com today.")
         names = [r["name"] for r in results]
-        assert "example.com" in names
-        assert "www.example.com" not in names
+        assert any(n == "example.com" for n in names)
+        assert all(n != "www.example.com" for n in names)
 
     def test_no_false_positives_on_lowercase(self):
         results = self.ex.extract("the quick brown fox jumped over the lazy dog.")
@@ -106,7 +106,7 @@ class TestEntityExtractor:
         """Email addresses yield the domain as an organization entity."""
         results = self.ex.extract("Contact support@example.org for help.")
         names = [r["name"] for r in results]
-        assert "example.org" in names
+        assert any(n == "example.org" for n in names)
         org = next(r for r in results if r["name"] == "example.org")
         assert org["entity_type"] == "organization"
         assert org["confidence"] == pytest.approx(0.7)

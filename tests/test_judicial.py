@@ -100,6 +100,27 @@ async def test_reinforce_increments_count():
     assert "applied_count = applied_count + 1" in query
 
 
+@pytest.mark.asyncio
+async def test_list_precedents_returns_all_rows():
+    row1 = _precedent_row(pattern_hash="ph1", confidence=0.9, applied_count=5)
+    row2 = _precedent_row(pattern_hash="ph2", confidence=0.7, applied_count=2)
+    db = _db(fetchall=[row1, row2])
+    store = PrecedentStore()
+    results = await store.list_precedents(db)
+    assert len(results) == 2
+    assert all(isinstance(r, JudicialPrecedent) for r in results)
+    phs = {r.pattern_hash for r in results}
+    assert {"ph1", "ph2"} == phs
+
+
+@pytest.mark.asyncio
+async def test_list_precedents_empty():
+    db = _db(fetchall=[])
+    store = PrecedentStore()
+    results = await store.list_precedents(db)
+    assert results == []
+
+
 # ── conflict resolver precedent path ─────────────────────────────────────────────
 
 def _mem(id, trust, mtype="preference"):
@@ -419,7 +440,6 @@ async def test_check_escalation_needed_none_fetchval():
 
 def _pool_with_row(row):
     """Build a mock DB with a .pool that returns *row* from fetchrow."""
-    import asyncio
     from contextlib import asynccontextmanager
 
     conn = MagicMock()

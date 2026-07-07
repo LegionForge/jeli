@@ -359,6 +359,124 @@ class TestMemoryImporter:
         assert result["imported"] == 1
 
 
+# ── importer branch coverage ─────────────────────────────────────────────────
+
+
+class TestImporterBranches:
+    def _make_importer(self):
+        db = MagicMock()
+
+        async def fetchall(query, *args):
+            return []
+
+        async def fetchrow(query, *args):
+            return None
+
+        db.fetchall = fetchall
+        db.fetchrow = fetchrow
+
+        with patch("jeli_scoped_mcp.portability.importer.MemoryTools") as mock_cls:
+            mock_tools = MagicMock()
+            mock_tools.capture_memory = AsyncMock(return_value={"id": str(uuid.uuid4()),
+                                                                "trust_score": 0.7,
+                                                                "record_hash": "x"})
+            mock_cls.return_value = mock_tools
+            importer = MemoryImporter(db=db, embedder=MagicMock(), chain_key="k", key_id="k1")
+            importer._tools = mock_tools
+        return importer, mock_tools
+
+    @pytest.mark.asyncio
+    async def test_import_empty_body_lines_skipped(self):
+        """Blank lines between records are skipped without incrementing any counter."""
+        importer, mock_tools = self._make_importer()
+        manifest = {"schema_version": "1.0", "exporter": "jeli-scoped-mcp",
+                    "exported_at": "now", "chain_valid": True, "filters": {}}
+        rec = _record_dict("hello world")
+        stream = io.StringIO(
+            json.dumps(manifest) + "\n"
+            + "\n"        # empty line — must be skipped cleanly
+            + "   \n"     # whitespace-only line — same
+            + json.dumps(rec) + "\n"
+        )
+        result = await importer.import_stream(stream)
+        assert result["imported"] == 1
+        assert result["errors"] == 0
+
+    @pytest.mark.asyncio
+    async def test_import_capture_failure_increments_errors(self):
+        """capture_memory raising → result='error' → else branch → errors += 1."""
+        importer, mock_tools = self._make_importer()
+        mock_tools.capture_memory = AsyncMock(side_effect=RuntimeError("DB down"))
+        manifest = {"schema_version": "1.0", "exporter": "jeli-scoped-mcp",
+                    "exported_at": "now", "chain_valid": True, "filters": {}}
+        stream = io.StringIO(
+            json.dumps(manifest) + "\n"
+            + json.dumps(_record_dict("content that will fail")) + "\n"
+        )
+        result = await importer.import_stream(stream)
+        assert result["errors"] == 1
+        assert result["imported"] == 0
+
+    def test_parse_manifest_empty_string_raises(self):
+        from jeli_scoped_mcp.portability.importer import MemoryImporter as MI
+        with pytest.raises(ImportError, match="empty"):
+            MI._parse_manifest("")
+
+    def test_parse_manifest_invalid_json_raises(self):
+        from jeli_scoped_mcp.portability.importer import MemoryImporter as MI
+        with pytest.raises(ImportError, match="not valid JSON"):
+            MI._parse_manifest("{bad json{{")
+
+
+class TestExporterBranches:
+    @pytest.mark.asyncio
+    async def test_export_with_memory_type_filter(self):
+        """memory_type kwarg appends a WHERE clause and param — covers lines 57-59."""
+        rows = [_make_row("semantic fact", memory_type="semantic")]
+        db = _make_db(rows)
+        out = io.StringIO()
+        result = await MemoryExporter(db=db).export(out, memory_type="semantic")
+        assert result["record_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_export_with_min_trust_filter(self):
+        """min_trust kwarg appends a WHERE clause and param — covers lines 61-63."""
+        rows = [_make_row("high trust", trust_score=0.9)]
+        db = _make_db(rows)
+        out = io.StringIO()
+        result = await MemoryExporter(db=db).export(out, min_trust=0.7)
+        assert result["record_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_export_metadata_as_string_parsed(self):
+        """metadata stored as a JSON string (older asyncpg) is decoded on export."""
+        row = _make_row("meta as string")
+        row["metadata"] = json.dumps({"content_class": "general"})  # string, not dict
+        db = _make_db([row])
+        out = io.StringIO()
+        await MemoryExporter(db=db).export(out)
+        lines = out.getvalue().strip().split("\n")
+        record = json.loads(lines[1])
+        assert record["metadata"] == {"content_class": "general"}
+
+    @pytest.mark.asyncio
+    async def test_check_chain_valid_db_error_returns_false(self):
+        """DB error in _check_chain_valid → returns False (chain_valid = False)."""
+        db = MagicMock()
+
+        async def fetchrow_raises(*a, **kw):
+            raise RuntimeError("DB connection lost")
+
+        async def fetchall(*a, **kw):
+            return []
+
+        db.fetchrow = fetchrow_raises
+        db.fetchall = fetchall
+        out = io.StringIO()
+        result = await MemoryExporter(db=db).export(out)
+        assert result["chain_valid"] is False
+
+
 # ── round-trip sanity ─────────────────────────────────────────────────────────
 
 

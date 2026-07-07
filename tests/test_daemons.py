@@ -6,12 +6,12 @@ All DB and embedder calls are mocked; no live Postgres required.
 import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
-from src.jeli_scoped_mcp.daemons.maintenance import MaintenanceDaemon
 from src.jeli_scoped_mcp.daemons.insights import InsightsDaemon
+from src.jeli_scoped_mcp.daemons.maintenance import MaintenanceDaemon
 from src.jeli_scoped_mcp.daemons.runner import DaemonRunner, _supervised
-
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -118,6 +118,40 @@ async def test_maintenance_archive_expired_with_pool():
 
     assert result["archived"] == 1
     assert conn.execute.await_count == 2  # INSERT + UPDATE
+
+
+@pytest.mark.asyncio
+async def test_maintenance_archive_expired_exception_per_row():
+    """Exception during archive for one row is swallowed; archived count stays 0."""
+    from contextlib import asynccontextmanager
+
+    conn = MagicMock()
+    conn.execute = AsyncMock(side_effect=RuntimeError("insert failed"))
+
+    @asynccontextmanager
+    async def fake_tx():
+        yield
+
+    conn.transaction = fake_tx
+
+    class FakeAcquire:
+        async def __aenter__(self_):
+            return conn
+
+        async def __aexit__(self_, *a):
+            pass
+
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=FakeAcquire())
+
+    row = {"id": "m1"}
+    db = _db(fetchall=[row])
+    db.pool = pool
+
+    daemon = MaintenanceDaemon(db=db, memory_tools=_memory_tools())
+    result = await daemon._archive_expired()
+
+    assert result["archived"] == 0  # exception swallowed, nothing counted
 
 
 @pytest.mark.asyncio

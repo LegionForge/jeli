@@ -7,7 +7,6 @@ import pytest
 
 from jeli_scoped_mcp.reranker.provider import LiteLLMReranker, NullReranker
 
-
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def make_candidates(n: int, with_distance: bool = True) -> list[dict]:
@@ -22,7 +21,7 @@ def make_candidates(n: int, with_distance: bool = True) -> list[dict]:
 
 
 def make_reranker(**kwargs) -> LiteLLMReranker:
-    defaults = dict(base_url="http://localhost:4000", api_key="test-key")
+    defaults = {"base_url": "http://localhost:4000", "api_key": "test-key"}
     defaults.update(kwargs)
     return LiteLLMReranker(**defaults)
 

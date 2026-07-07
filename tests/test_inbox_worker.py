@@ -1,33 +1,38 @@
 """Unit tests for InboxWorker — mocked DB and classifier, no live Postgres."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
-from src.jeli_scoped_mcp.inbox.worker import InboxWorker
 from src.jeli_scoped_mcp.inbox.models import (
-    ClassifierDecision, Durability, Encoding, InboxStatus, Urgency,
+    ClassifierDecision,
+    Durability,
+    Encoding,
+    InboxStatus,
+    Urgency,
 )
+from src.jeli_scoped_mcp.inbox.worker import InboxWorker
 
 
 def _decision(**kwargs) -> ClassifierDecision:
-    defaults = dict(
-        status=InboxStatus.APPROVED,
-        importance=0.7,
-        urgency=Urgency.MEDIUM,
-        durability=Durability.DURABLE,
-        encoding=Encoding.RAW,
-        suggested_type="episodic",
-        suggested_trust=0.6,
-        keywords=["test"],
-        entities={},
-        requires_review=False,
-        review_reason=None,
-        near_duplicate_of=None,
-        duplicate_distance=None,
-        merge_strategy=None,
-        rejection_reason=None,
-        enrichment_log={},
-    )
+    defaults = {
+        "status": InboxStatus.APPROVED,
+        "importance": 0.7,
+        "urgency": Urgency.MEDIUM,
+        "durability": Durability.DURABLE,
+        "encoding": Encoding.RAW,
+        "suggested_type": "episodic",
+        "suggested_trust": 0.6,
+        "keywords": ["test"],
+        "entities": {},
+        "requires_review": False,
+        "review_reason": None,
+        "near_duplicate_of": None,
+        "duplicate_distance": None,
+        "merge_strategy": None,
+        "rejection_reason": None,
+        "enrichment_log": {},
+    }
     defaults.update(kwargs)
     return ClassifierDecision(**defaults)
 

@@ -268,7 +268,6 @@ async def test_extract_entities_llm_parses_json_response():
 @pytest.mark.asyncio
 async def test_extract_entities_llm_strips_markdown_fences():
     """LLM response wrapped in ```json ... ``` is still parsed correctly."""
-    import json
     from unittest.mock import AsyncMock, MagicMock, patch
 
     c = _make_classifier()
