@@ -11,6 +11,7 @@ import uuid
 from datetime import UTC, datetime
 
 from ..database.pool import AsyncPostgresPool
+from ..security import InjectionDefense
 from ..tools.memory_tools import MemoryTools
 from .classifier import IngestionClassifier
 from .models import InboxStatus
@@ -32,6 +33,7 @@ class InboxWorker:
         instance_index: int = 0,
         poll_interval: float = POLL_INTERVAL_SECONDS,
         max_retries: int = MAX_RETRIES,
+        llm_model: str | None = None,
     ):
         self.db = db
         self.classifier = classifier
@@ -40,6 +42,7 @@ class InboxWorker:
         self.instance_index = instance_index
         self.poll_interval = poll_interval
         self.max_retries = max_retries
+        self.llm_model = llm_model
 
     async def run_once(self) -> int:
         """Claim and process one batch. Returns items processed count."""
@@ -111,9 +114,42 @@ class InboxWorker:
                 source_agent=source_agent,
             )
 
+            # Bouncer second pass: LLM injection classifier on items headed for
+            # the chain. Catches natural-language injection the classifier's
+            # heuristics miss (GH #33). Runs only when a model is configured, and
+            # only on would-be writes. Fail-open — a classifier outage must never
+            # block or hold a legitimate item.
+            review_reason = decision.review_reason
+            requires_review = decision.requires_review
+            llm_held = False
+            if self.llm_model and decision.status in (
+                InboxStatus.APPROVED,
+                InboxStatus.MERGED,
+            ):
+                try:
+                    _, llm_flagged, _ = await InjectionDefense.sanitize_content_async(
+                        content,
+                        source_trust=caller_trust,
+                        content_class=content_class,
+                        llm_model=self.llm_model,
+                    )
+                    if llm_flagged:
+                        llm_held = True
+                        review_reason = "llm_classifier"
+                        requires_review = True
+                        logger.warning(
+                            "inbox %s: llm classifier flagged injection — holding", inbox_id
+                        )
+                except Exception:
+                    logger.warning(
+                        "inbox %s: llm injection classifier failed open", inbox_id, exc_info=True
+                    )
+
             promoted_to: str | None = None
 
-            if decision.status in (InboxStatus.APPROVED, InboxStatus.MERGED):
+            if llm_held:
+                final_status = "held"
+            elif decision.status in (InboxStatus.APPROVED, InboxStatus.MERGED):
                 amended_from = decision.near_duplicate_of if decision.status == InboxStatus.MERGED else None
                 result = await self.memory_tools.capture_memory(
                     content=content,
@@ -180,8 +216,8 @@ class InboxWorker:
                 decision.near_duplicate_of,
                 decision.duplicate_distance,
                 decision.merge_strategy,
-                decision.requires_review,
-                decision.review_reason,
+                requires_review,
+                review_reason,
                 decision.rejection_reason,
                 self.classifier.CLASSIFIER_VERSION,
                 datetime.now(UTC),

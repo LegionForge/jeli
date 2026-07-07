@@ -10,6 +10,7 @@ verify`.
 import hmac
 import json
 import logging
+import time
 
 from ..database.pool import AsyncPostgresPool
 from .rules import ConstitutionalRule, RuleType, sign_rule
@@ -24,7 +25,19 @@ class ConstitutionalError(Exception):
 
 
 class ConstitutionalManager:
-    """CRUD-lite over the constitutional_rules table."""
+    """CRUD-lite over the constitutional_rules table.
+
+    load_active_rules is on the hottest path (every search and capture), so it
+    is backed by a per-instance TTL cache. The cache is per-instance rather than
+    class-level so each server/CLI process owns its own state; a process's own
+    mutations invalidate it immediately, and cross-process changes converge
+    within one TTL window.
+    """
+
+    def __init__(self, ttl: float = 30.0) -> None:
+        self._cache: list[ConstitutionalRule] | None = None
+        self._cache_expires: float = 0.0
+        self._CACHE_TTL = ttl
 
     async def add_rule(
         self,
@@ -72,6 +85,7 @@ class ConstitutionalManager:
             rule_type,
             applies_to,
         )
+        self.invalidate_cache()
         return {
             "id": str(row["id"]),
             "rule_type": rule_type,
@@ -84,7 +98,20 @@ class ConstitutionalManager:
         return await self.load_active_rules(db)
 
     async def load_active_rules(self, db: AsyncPostgresPool) -> list[ConstitutionalRule]:
-        """Active rules for the Read Gate — revoked_at IS NULL AND active."""
+        """Active rules for the Read Gate — revoked_at IS NULL AND active.
+
+        Served from a TTL cache; only misses hit the DB.
+        """
+        if self._cache is not None and time.monotonic() < self._cache_expires:
+            return self._cache
+        rules = await self._fetch_from_db(db)
+        self._cache = rules
+        self._cache_expires = time.monotonic() + self._CACHE_TTL
+        return rules
+
+    async def _fetch_from_db(
+        self, db: AsyncPostgresPool
+    ) -> list[ConstitutionalRule]:
         rows = await db.fetchall(
             """
             SELECT id, rule_type, parameters, description, applies_to,
@@ -95,6 +122,15 @@ class ConstitutionalManager:
             """
         )
         return [self._row_to_rule(r) for r in rows]
+
+    def invalidate_cache(self) -> None:
+        """Force the next load_active_rules to hit the DB.
+
+        Called after add_rule/revoke_rule so a process sees its own mutations
+        immediately rather than up to one TTL later.
+        """
+        self._cache = None
+        self._cache_expires = 0.0
 
     async def revoke_rule(self, db: AsyncPostgresPool, rule_id: str) -> dict:
         """Retire a rule (never delete): set revoked_at + active=FALSE."""
@@ -108,6 +144,7 @@ class ConstitutionalManager:
         )
         if result == "UPDATE 0":
             raise ConstitutionalError(f"rule {rule_id} not found or already revoked")
+        self.invalidate_cache()
         logger.info("constitutional revoke_rule: id=%s", rule_id)
         return {"revoked": rule_id}
 

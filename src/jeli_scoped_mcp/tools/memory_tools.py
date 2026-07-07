@@ -113,6 +113,16 @@ class MemoryTools:
         # Optional entity-graph sink. When set, capture_memory extracts named
         # entities (best-effort) and links them to the stored memory.
         self._graph_store = graph_store
+        # Persistent constitutional manager so its TTL rule cache survives across
+        # the many capture/search calls this instance serves (GH: hot path).
+        self._constitutional_mgr: Any = None
+
+    def _constitutional(self) -> Any:
+        if self._constitutional_mgr is None:
+            from ..constitutional.manager import ConstitutionalManager
+
+            self._constitutional_mgr = ConstitutionalManager()
+        return self._constitutional_mgr
 
     # ── capture_memory ───────────────────────────────────────────────────────
 
@@ -162,9 +172,8 @@ class MemoryTools:
         # Constitutional Write Gate — inviolable by agents. A denied write never
         # enters the chain; a trust cap is applied before the record is hashed.
         from ..constitutional.gate import WriteGate
-        from ..constitutional.manager import ConstitutionalManager
 
-        _active_rules = await ConstitutionalManager().load_active_rules(self.db)
+        _active_rules = await self._constitutional().load_active_rules(self.db)
         if _active_rules:
             _allowed, trust, _block_reason = WriteGate().check(
                 memory_type=memory_type,
@@ -283,14 +292,28 @@ class MemoryTools:
             try:
                 from ..graph.extractor import EntityExtractor
 
-                entities = EntityExtractor().extract(content)
+                extractor = EntityExtractor()
+                entities = extractor.extract(content)
+                entity_id_map: dict[str, str] = {}
                 for ent in entities:
                     eid = await self._graph_store.upsert_entity(
                         self.db, ent["name"], ent["entity_type"]
                     )
+                    entity_id_map[ent["name"]] = eid
                     await self._graph_store.link_memory(
                         self.db, str(row["id"]), eid, confidence=ent["confidence"]
                     )
+
+                # Co-occurrence relations between the entities we just linked.
+                for subj_name, predicate, obj_name, _ in extractor.extract_relations(
+                    entities
+                ):
+                    subj_id = entity_id_map.get(subj_name)
+                    obj_id = entity_id_map.get(obj_name)
+                    if subj_id and obj_id:
+                        await self._graph_store.record_relation(
+                            self.db, subj_id, predicate, obj_id
+                        )
             except Exception:
                 logger.warning("entity extraction failed for %s", row["id"], exc_info=True)
 
@@ -495,9 +518,8 @@ class MemoryTools:
         # Constitutional gate — applied last, cannot be bypassed by agents.
         # The user's signed rules are the final word on what leaves the store.
         from ..constitutional.gate import ReadGate
-        from ..constitutional.manager import ConstitutionalManager
 
-        active_rules = await ConstitutionalManager().load_active_rules(self.db)
+        active_rules = await self._constitutional().load_active_rules(self.db)
         if active_rules:
             results = ReadGate().apply(results, actor=actor, rules=active_rules)
 

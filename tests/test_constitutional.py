@@ -6,6 +6,7 @@ queries ConstitutionalManager issues.
 
 import uuid
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pytest
 from test_memory_tools import FakeEmbedder, capture
@@ -323,3 +324,70 @@ def test_infer_content_class_cli_write_untouched():
         "see https://evil.example/leak", "general", None
     )
     assert out == "general"
+
+
+# ── load_active_rules TTL cache ──────────────────────────────────────────────
+
+
+class CountingPool(FakePool):
+    """FakePool that counts how many times load_active_rules hits the DB."""
+
+    def __init__(self):
+        super().__init__()
+        self.fetchall_calls = 0
+
+    async def fetchall(self, query, *args):
+        self.fetchall_calls += 1
+        return await super().fetchall(query, *args)
+
+
+async def test_load_active_rules_caches_within_ttl():
+    pool = CountingPool()
+    mgr = ConstitutionalManager()
+    await mgr.load_active_rules(pool)
+    await mgr.load_active_rules(pool)
+    assert pool.fetchall_calls == 1  # second call served from cache
+
+
+async def test_load_active_rules_refreshes_after_ttl():
+    pool = CountingPool()
+    mgr = ConstitutionalManager(ttl=30.0)
+    clock = {"t": 1000.0}
+    with patch(
+        "jeli_scoped_mcp.constitutional.manager.time.monotonic",
+        side_effect=lambda: clock["t"],
+    ):
+        await mgr.load_active_rules(pool)  # miss at t=1000
+        clock["t"] = 1005.0
+        await mgr.load_active_rules(pool)  # still within TTL → cache
+        assert pool.fetchall_calls == 1
+        clock["t"] = 1040.0  # past 30s TTL
+        await mgr.load_active_rules(pool)  # miss again
+        assert pool.fetchall_calls == 2
+
+
+async def test_invalidate_cache_forces_fresh_load():
+    pool = CountingPool()
+    mgr = ConstitutionalManager()
+    await mgr.load_active_rules(pool)
+    mgr.invalidate_cache()
+    await mgr.load_active_rules(pool)
+    assert pool.fetchall_calls == 2
+
+
+async def test_add_rule_invalidates_cache():
+    pool = CountingPool()
+    mgr = ConstitutionalManager()
+    await mgr.load_active_rules(pool)  # warm the cache (fetchall #1)
+    await mgr.add_rule(
+        pool,
+        chain_key=CHAIN_KEY,
+        key_id="k1",
+        rule_type="exclude_memory_type",
+        parameters={"memory_type": "transient"},
+        description="Agents cannot see transient memories",
+    )
+    # add_rule invalidated the cache → this load hits the DB again (fetchall #2)
+    rules = await mgr.load_active_rules(pool)
+    assert pool.fetchall_calls == 2
+    assert len(rules) == 1

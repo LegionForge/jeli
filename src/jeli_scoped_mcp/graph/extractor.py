@@ -90,6 +90,42 @@ class EntityExtractor:
 
         return out
 
+    def extract_relations(
+        self, entities: list[dict]
+    ) -> list[tuple[str, str, str, str]]:
+        """Infer relations between co-occurring entities.
+
+        Returns (subject_name, predicate, object_name, subject_type) tuples.
+        Rules are conservative co-occurrence heuristics (no LLM, stays sync):
+        only high-confidence type pairings emit an edge, so the graph isn't
+        poisoned with noise. Capped at 20 to avoid combinatorial blow-up on
+        entity-dense content.
+        """
+        by_type: dict[str, list[str]] = {}
+        for e in entities:
+            by_type.setdefault(e["entity_type"], []).append(e["name"])
+
+        persons = by_type.get("person", [])
+        projects = by_type.get("project", [])
+        orgs = by_type.get("organization", [])
+        techs = by_type.get("technology", [])
+
+        relations: list[tuple[str, str, str, str]] = []
+        for person in persons:
+            for project in projects:
+                relations.append((person, "works_on", project, "person"))
+        for person in persons:
+            for org in orgs:
+                relations.append((person, "member_of", org, "person"))
+        for project in projects:
+            for tech in techs:
+                relations.append((project, "uses", tech, "project"))
+        for org in orgs:
+            for project in projects:
+                relations.append((org, "develops", project, "organization"))
+
+        return relations[:20]
+
 
 def _clean_host(host: str) -> str:
     host = host.lower().strip()

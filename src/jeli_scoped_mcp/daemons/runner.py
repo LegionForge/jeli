@@ -93,6 +93,9 @@ class DaemonRunner:
                 instance_index=i,
                 poll_interval=self.settings.inbox_poll_interval,
                 max_retries=self.settings.inbox_max_retries,
+                llm_model=(
+                    self.settings.reranker_model if self.settings.litellm_base_url else None
+                ),
             )
             self._tasks.append(
                 asyncio.create_task(

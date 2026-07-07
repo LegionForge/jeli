@@ -83,6 +83,25 @@ class TestEntityExtractor:
         for r in results:
             assert 0.0 <= r["confidence"] <= 1.0
 
+    def test_extract_relations_person_works_on_project(self):
+        entities = self.ex.extract("JP Cruz works on Jeli.")
+        relations = self.ex.extract_relations(entities)
+        triples = {(s, p, o) for s, p, o, _ in relations}
+        assert ("JP Cruz", "works_on", "Jeli") in triples
+
+    def test_extract_relations_empty_when_no_co_occurrence(self):
+        # Only persons, no projects/orgs/techs → nothing to relate them to.
+        entities = [{"name": "JP Cruz", "entity_type": "person", "confidence": 0.7}]
+        assert self.ex.extract_relations(entities) == []
+
+    def test_extract_relations_capped_at_20(self):
+        entities = (
+            [{"name": f"P{i}", "entity_type": "person", "confidence": 0.7} for i in range(10)]
+            + [{"name": f"J{i}", "entity_type": "project", "confidence": 0.9} for i in range(10)]
+        )
+        relations = self.ex.extract_relations(entities)
+        assert len(relations) <= 20
+
 
 # ── GraphStore ────────────────────────────────────────────────────────────────
 
@@ -270,6 +289,67 @@ class TestGraphCaptureIntegration:
             call.args[1] for call in mock_graph.upsert_entity.call_args_list
         }
         assert "JP Cruz" in extracted_names or "Jeli" in extracted_names
+
+    @pytest.mark.asyncio
+    async def test_capture_records_relations_between_entities(self):
+        """Capturing content with a person + project records a works_on relation."""
+        from jeli_scoped_mcp.tools.memory_tools import MemoryTools
+
+        # Give each entity name a distinct id so subj_id != obj_id and both truthy.
+        ids = {}
+
+        async def fake_upsert(db, name, entity_type, aliases=None):
+            return ids.setdefault(name, str(uuid.uuid4()))
+
+        mock_graph = MagicMock()
+        mock_graph.upsert_entity = AsyncMock(side_effect=fake_upsert)
+        mock_graph.link_memory = AsyncMock()
+        mock_graph.record_relation = AsyncMock()
+
+        db = MagicMock()
+        fake_id = uuid.uuid4()
+
+        @asynccontextmanager
+        async def fake_locked_transaction(lock):
+            conn = MagicMock()
+            conn.fetchval = AsyncMock(return_value="prevhash")
+            conn.fetchrow = AsyncMock(return_value={
+                "id": fake_id,
+                "created_at": datetime.now(UTC),
+            })
+            conn.execute = AsyncMock()
+            yield conn
+
+        db.locked_transaction = fake_locked_transaction
+        db.execute = AsyncMock()
+        db.fetchall = AsyncMock(return_value=[])
+
+        embedder = MagicMock()
+        embedder.embed = AsyncMock(return_value=MagicMock(
+            vector=[0.1] * 1024, model_id="test/embed", dimensions=1024,
+            embedded_at=datetime.now(UTC),
+        ))
+
+        tools = MemoryTools(
+            db=db, embedder=embedder, chain_key="testkey",
+            key_id="k1", graph_store=mock_graph,
+        )
+
+        with patch("jeli_scoped_mcp.constitutional.manager.ConstitutionalManager") as mock_cm:
+            mock_cm.return_value.load_active_rules = AsyncMock(return_value=[])
+            await tools.capture_memory(
+                content="JP Cruz works on Jeli.",
+                memory_type="episodic",
+                trust_score=0.8,
+                actor="jp-cruz",
+            )
+
+        mock_graph.record_relation.assert_awaited()
+        call = mock_graph.record_relation.call_args
+        # record_relation(db, subject_id, predicate, object_id)
+        assert call.args[2] == "works_on"
+        assert call.args[1] == ids["JP Cruz"]
+        assert call.args[3] == ids["Jeli"]
 
     @pytest.mark.asyncio
     async def test_graph_failure_does_not_fail_capture(self):
