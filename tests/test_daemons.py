@@ -86,6 +86,41 @@ async def test_maintenance_archive_expired_no_pool():
 
 
 @pytest.mark.asyncio
+async def test_maintenance_archive_expired_with_pool():
+    """Archive path with a mocked pool — exercises conn.execute inside the tx."""
+    from contextlib import asynccontextmanager
+
+    conn = MagicMock()
+    conn.execute = AsyncMock()
+
+    @asynccontextmanager
+    async def fake_tx():
+        yield
+
+    conn.transaction = fake_tx
+
+    class FakeAcquire:
+        async def __aenter__(self_):
+            return conn
+
+        async def __aexit__(self_, *a):
+            pass
+
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=FakeAcquire())
+
+    row = {"id": "m1"}
+    db = _db(fetchall=[row])
+    db.pool = pool
+
+    daemon = MaintenanceDaemon(db=db, memory_tools=_memory_tools())
+    result = await daemon._archive_expired()
+
+    assert result["archived"] == 1
+    assert conn.execute.await_count == 2  # INSERT + UPDATE
+
+
+@pytest.mark.asyncio
 async def test_maintenance_cleanup_inbox_parses_delete_count():
     db = _db(execute_result="DELETE 7")
     daemon = MaintenanceDaemon(db=db, memory_tools=_memory_tools())
