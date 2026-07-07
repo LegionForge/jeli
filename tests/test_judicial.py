@@ -233,3 +233,319 @@ async def test_single_medium_conflict_does_not_escalate():
         await resolver._log_conflict("mem-a", "mem-b", "reason", "medium", "direct")
 
     queue.enqueue.assert_not_awaited()
+
+
+# ── _resolve_high — new memory loses on trust ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_resolve_high_new_loses_when_lower_trust():
+    """When old trust > new trust, the new memory is the loser and is invalidated."""
+    db = _db()
+    resolver = _resolver(db)
+    store = MagicMock()
+    store.pattern_hash = MagicMock(return_value="ph")
+    store.lookup = AsyncMock(return_value=None)
+    store.record = AsyncMock()
+
+    invalidated = []
+
+    with patch(
+        "src.jeli_scoped_mcp.judicial.precedent.PrecedentStore", return_value=store
+    ), patch("src.jeli_scoped_mcp.tools.memory_tools.MemoryTools"), patch(
+        "src.jeli_scoped_mcp.tools.state_tools.StateTools"
+    ) as MockState:
+        MockState.return_value.invalidate = AsyncMock(
+            side_effect=lambda memory_id, **_: invalidated.append(memory_id)
+        )
+        # old_trust (0.9) > new_trust (0.4) → new memory ("new-id") is the loser
+        await resolver._resolve_high(
+            _mem("new-id", 0.4, "preference"),
+            _mem("old-id", 0.9, "preference"),
+            "trust conflict",
+            "direct",
+        )
+
+    assert "new-id" in invalidated
+
+
+@pytest.mark.asyncio
+async def test_resolve_high_equal_trust_older_loses():
+    """On trust tie, the older memory wins so new-id becomes the loser too
+    (new_trust >= old_trust branch — loser_id = old_mem['id'])."""
+    db = _db()
+    resolver = _resolver(db)
+    store = MagicMock()
+    store.pattern_hash = MagicMock(return_value="ph")
+    store.lookup = AsyncMock(return_value=None)
+    store.record = AsyncMock()
+
+    invalidated = []
+
+    with patch(
+        "src.jeli_scoped_mcp.judicial.precedent.PrecedentStore", return_value=store
+    ), patch("src.jeli_scoped_mcp.tools.memory_tools.MemoryTools"), patch(
+        "src.jeli_scoped_mcp.tools.state_tools.StateTools"
+    ) as MockState:
+        MockState.return_value.invalidate = AsyncMock(
+            side_effect=lambda memory_id, **_: invalidated.append(memory_id)
+        )
+        # equal trust → newer wins → old_mem is loser
+        await resolver._resolve_high(
+            _mem("new-id", 0.6, "preference"),
+            _mem("old-id", 0.6, "preference"),
+            "equal trust conflict",
+            "direct",
+        )
+
+    assert "old-id" in invalidated
+
+
+# ── _handle_queue_row — success and retry paths ───────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_handle_queue_row_success():
+    """Happy path: _check_memory returns flags_found, row is marked done."""
+    db = _db()
+    resolver = _resolver(db)
+
+    row = {
+        "id": "q1",
+        "memory_id": "m1",
+        "retry_count": 0,
+    }
+
+    with patch.object(resolver, "_check_memory", AsyncMock(return_value=2)):
+        await resolver._handle_queue_row(row)
+
+    db.execute.assert_awaited_once()
+    update_args = db.execute.await_args.args
+    assert "status = 'done'" in update_args[0]
+    assert update_args[2] == 2  # flags_found = 2
+
+
+@pytest.mark.asyncio
+async def test_handle_queue_row_error_retries():
+    """On exception the row is re-queued as 'pending' on first retry."""
+    db = _db()
+    resolver = _resolver(db)
+
+    row = {"id": "q2", "memory_id": "m2", "retry_count": 0}
+
+    with patch.object(resolver, "_check_memory", AsyncMock(side_effect=RuntimeError("boom"))):
+        await resolver._handle_queue_row(row)
+
+    db.execute.assert_awaited_once()
+    update_args = db.execute.await_args.args
+    assert update_args[1] == "pending"  # status → pending (retry 1 of 3)
+
+
+@pytest.mark.asyncio
+async def test_handle_queue_row_error_fails_after_three():
+    """After 3 retries the row is permanently marked 'failed'."""
+    db = _db()
+    resolver = _resolver(db)
+
+    row = {"id": "q3", "memory_id": "m3", "retry_count": 2}
+
+    with patch.object(resolver, "_check_memory", AsyncMock(side_effect=RuntimeError("boom"))):
+        await resolver._handle_queue_row(row)
+
+    update_args = db.execute.await_args.args
+    assert update_args[1] == "failed"  # retry_count reached 3 → failed
+
+
+# ── _drain_queue — returns 0 when queue is empty ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_drain_queue_empty_returns_zero():
+    db = _db()
+    resolver = _resolver(db)
+
+    with patch.object(resolver, "_claim_one", AsyncMock(return_value=None)):
+        result = await resolver._drain_queue()
+
+    assert result == 0
+
+
+@pytest.mark.asyncio
+async def test_drain_queue_processes_rows():
+    db = _db()
+    resolver = _resolver(db)
+    call_count = {"n": 0}
+
+    async def claim_once():
+        if call_count["n"] == 0:
+            call_count["n"] += 1
+            return {"id": "q1", "memory_id": "m1", "retry_count": 0}
+        return None
+
+    with patch.object(resolver, "_claim_one", AsyncMock(side_effect=claim_once)), patch.object(
+        resolver, "_handle_queue_row", AsyncMock()
+    ):
+        result = await resolver._drain_queue()
+
+    assert result == 1
+
+
+# ── _check_escalation_needed ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_check_escalation_needed_true():
+    db = _db(fetchval=3)
+    resolver = _resolver(db)
+    assert await resolver._check_escalation_needed("mem-x") is True
+
+
+@pytest.mark.asyncio
+async def test_check_escalation_needed_false():
+    db = _db(fetchval=2)
+    resolver = _resolver(db)
+    assert await resolver._check_escalation_needed("mem-x") is False
+
+
+@pytest.mark.asyncio
+async def test_check_escalation_needed_none_fetchval():
+    db = _db(fetchval=None)
+    resolver = _resolver(db)
+    assert await resolver._check_escalation_needed("mem-x") is False
+
+
+# ── _claim_one — pool async context manager ───────────────────────────────────
+
+
+def _pool_with_row(row):
+    """Build a mock DB with a .pool that returns *row* from fetchrow."""
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    conn = MagicMock()
+    conn.fetchrow = AsyncMock(return_value=row)
+
+    @asynccontextmanager
+    async def fake_transaction():
+        yield
+
+    conn.transaction = fake_transaction
+
+    class FakeAcquire:
+        async def __aenter__(self_):
+            return conn
+
+        async def __aexit__(self_, *a):
+            pass
+
+    pool = MagicMock()
+    pool.acquire = MagicMock(return_value=FakeAcquire())
+
+    db = _db()
+    db.pool = pool
+    return db
+
+
+@pytest.mark.asyncio
+async def test_claim_one_returns_row_when_pending():
+    sentinel = {"id": "q1", "memory_id": "m1", "status": "processing", "retry_count": 0}
+    db = _pool_with_row(sentinel)
+    resolver = _resolver(db)
+    result = await resolver._claim_one()
+    assert result is not None
+    assert result["id"] == "q1"
+
+
+@pytest.mark.asyncio
+async def test_claim_one_returns_none_when_empty():
+    db = _pool_with_row(None)
+    resolver = _resolver(db)
+    result = await resolver._claim_one()
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_claim_one_returns_none_when_no_pool():
+    db = _db()
+    db.pool = None
+    resolver = _resolver(db)
+    result = await resolver._claim_one()
+    assert result is None
+
+
+# ── _check_memory — contradiction detection without live DB ───────────────────
+
+
+def _memory_row(id="m1", content="I prefer Python", trust=0.8, mtype="preference"):
+    return {
+        "id": id,
+        "content": content,
+        "trust_score": trust,
+        "memory_type": mtype,
+        "created_at": None,
+        "embedding": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_check_memory_not_found_returns_zero():
+    db = _db(fetchrow=None)
+    resolver = _resolver(db)
+    result = await resolver._check_memory("missing-id")
+    assert result == 0
+
+
+@pytest.mark.asyncio
+async def test_check_memory_embed_failure_returns_zero():
+    db = _db(fetchrow=_memory_row())
+    resolver = _resolver(db)
+    resolver.embedder.embed_query = AsyncMock(side_effect=RuntimeError("model down"))
+    result = await resolver._check_memory("m1")
+    assert result == 0
+
+
+@pytest.mark.asyncio
+async def test_check_memory_no_neighbors_returns_zero():
+    db = _db(fetchrow=_memory_row())
+    db.fetchall = AsyncMock(return_value=[])
+    resolver = _resolver(db)
+    resolver.embedder.embed_query = AsyncMock(
+        return_value=MagicMock(vector=[0.1] * 4)
+    )
+    result = await resolver._check_memory("m1")
+    assert result == 0
+
+
+@pytest.mark.asyncio
+async def test_check_memory_medium_conflict_logs():
+    """A MEDIUM contradiction is logged (not resolved) and flags_count > 0."""
+    new_row = _memory_row("m-new", "JP works at LegionForge now", 0.8)
+    neighbor = _memory_row("m-old", "JP works at ACME Corp", 0.8)
+    db = _db(fetchrow=new_row)
+    db.fetchall = AsyncMock(return_value=[neighbor])
+    db.fetchval = AsyncMock(return_value=0)  # escalation threshold not met
+
+    resolver = _resolver(db)
+    resolver.embedder.embed_query = AsyncMock(
+        return_value=MagicMock(vector=[0.1] * 4)
+    )
+
+    from src.jeli_scoped_mcp.core.contradiction import (
+        ContradictionClassifier,
+        ContradictionFlag,
+        ContradictionSeverity,
+        ContradictionType,
+    )
+
+    fake_flag = ContradictionFlag(
+        memory_id="m-old",
+        conflicting_memory_id="m-new",
+        contradiction_type=ContradictionType.DIRECT,
+        severity=ContradictionSeverity.MEDIUM,
+        reason="direct contradiction detected",
+    )
+
+    with patch.object(ContradictionClassifier, "classify", return_value=[fake_flag]):
+        result = await resolver._check_memory("m-new")
+
+    assert result == 1
