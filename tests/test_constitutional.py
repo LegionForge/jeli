@@ -326,6 +326,27 @@ def test_infer_content_class_cli_write_untouched():
     assert out == "general"
 
 
+def test_read_gate_unknown_rule_type_leaves_results_unchanged(caplog):
+    """An unknown rule type is logged loudly but results are returned untouched (fail-closed
+    semantics: a mis-typed rule never silently *widens* what agents see)."""
+    unknown_rule = ConstitutionalRule(
+        rule_type="nonexistent_future_rule",
+        parameters={},
+        description="from the future",
+        applies_to="all",
+        created_at=datetime.now(UTC),
+        rule_hash="x",
+    )
+    results = [{"id": "m1", "content": "sensitive info", "memory_type": "preference"}]
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="jeli_scoped_mcp.constitutional.gate"):
+        out = ReadGate().apply(results, actor="agent", rules=[unknown_rule])
+
+    assert out == results  # unchanged
+    assert "unknown rule_type" in caplog.text
+
+
 # ── load_active_rules TTL cache ──────────────────────────────────────────────
 
 
