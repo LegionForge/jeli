@@ -207,6 +207,8 @@ class FakePool:
             ]
         if "ORDER BY chain_seq ASC" in query:
             return list(self.memories)
+        if "FROM constitutional_rules" in query:
+            return []
         raise AssertionError(f"unexpected fetchall: {query}")
 
     async def execute(self, query, *args):

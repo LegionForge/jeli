@@ -56,6 +56,8 @@ def test_agent_surface_has_no_operator_tools():
         "search_memory",
         "audit_trail",
         "summarize_session",
+        "search_by_entity",
+        "get_entity_graph",
     }
 
 
