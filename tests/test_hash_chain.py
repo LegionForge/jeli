@@ -283,6 +283,17 @@ class TestAmendmentTracker:
         assert is_amend is False
         assert "differs" in reason
 
+    def test_malformed_canonical_json_not_amendment(self):
+        """Unparseable canonical JSON is treated as not-an-amendment (fail safe)."""
+        is_amend, reason = AmendmentTracker.is_amendment(
+            old_trust_score=1.0,
+            new_trust_score=1.0,
+            old_canonical="not valid json {{{",
+            new_canonical='{"memory_type": "preference"}',
+        )
+        assert is_amend is False
+        assert "parse" in reason.lower()
+
     def test_delta_embedding_computation(self):
         """L2 distance between embeddings is computed correctly."""
         old = [1.0, 0.0, 0.0]
