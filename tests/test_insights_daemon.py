@@ -187,3 +187,52 @@ async def test_verify_report_structure():
     assert report["orphaned_state_events"] == 0
     assert report["memories_without_audit"] == 1
     assert report["aging_high_trust"] == 3
+
+
+# ── cluster scan — uncovered branches ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_cluster_scan_skips_undersized_cluster():
+    """A memory with only 1 neighbor (2 total) is below MIN_CLUSTER_SIZE=3 — no write."""
+    main = [{"id": "a", "content": "alpha", "memory_type": "semantic", "embedding": "[0.1]"}]
+    neighbors = [{"id": "b", "content": "beta"}]  # 2 members total < 3
+    db = _cluster_db(main, neighbors)
+    daemon = _daemon(db, _settings())
+
+    result = await daemon._cluster_scan()
+
+    assert result["clusters_found"] == 0
+    daemon.memory_tools.capture_memory.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cluster_scan_skips_null_embedding():
+    """A memory whose embedding is None is skipped — no cluster attempt."""
+    main = [{"id": "a", "content": "alpha", "memory_type": "semantic", "embedding": None}]
+    db = MagicMock()
+    db.fetchall = AsyncMock(return_value=main)  # no second fetchall needed
+    db.pool = None
+    daemon = _daemon(db, _settings())
+
+    result = await daemon._cluster_scan()
+
+    assert result["clusters_found"] == 0
+
+
+@pytest.mark.asyncio
+async def test_cluster_scan_skips_empty_text_synthesis():
+    """_synthesize_cluster returns fallback when LLM returns empty string."""
+    main = [{"id": "a", "content": "alpha", "memory_type": "semantic", "embedding": "[0.1]"}]
+    neighbors = [{"id": "b", "content": "beta"}, {"id": "c", "content": "gamma"}]
+    db = _cluster_db(main, neighbors)
+    daemon = _daemon(db, _settings(litellm_base_url="http://proxy"))
+
+    with patch.object(daemon, "_call_synthesis_llm", AsyncMock(return_value="")):
+        result = await daemon._cluster_scan()
+
+    # Empty LLM response falls back to Cluster: snippet format
+    assert result["clusters_found"] == 1
+    assert result["synthesis_used"] is False
+    written = daemon.memory_tools.capture_memory.await_args.kwargs["content"]
+    assert written.startswith("Cluster: ")
