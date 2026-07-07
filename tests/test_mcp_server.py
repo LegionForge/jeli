@@ -304,3 +304,55 @@ async def test_submit_to_inbox_row_none_raises():
             {"content": "hello world", "trust_score": 0.5, "memory_type": "episodic"},
             actor="hermes",
         )
+
+
+# ── audit_trail dispatch ──────────────────────────────────────────────────────
+
+
+async def test_dispatch_audit_trail():
+    server = _server(_settings())
+    server.tools.audit_trail = AsyncMock(return_value={"events": []})
+    result = await server.dispatch(
+        "audit_trail", {"memory_id": "11111111-1111-1111-1111-111111111111"}
+    )
+    server.tools.audit_trail.assert_awaited_once_with(
+        memory_id="11111111-1111-1111-1111-111111111111",
+        actor=server.settings.agent_actor,
+    )
+    assert result == {"events": []}
+
+
+async def test_dispatch_search_by_entity_with_active_rules():
+    """When constitutional rules are active, ReadGate.apply is called (line 343)."""
+    import json as _json
+    from datetime import UTC, datetime
+
+    rule_row = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "rule_type": "max_results",
+        "parameters": {"max_results": 1},
+        "description": "limit results",
+        "applies_to": "all",
+        "active": True,
+        "created_at": datetime.now(UTC),
+        "revoked_at": None,
+        "rule_hash": "unused",
+        "key_id": "k1",
+    }
+
+    # Return two results from the graph; the max_results rule should cap to 1.
+    result_rows = [
+        {"id": "m1", "content": "a", "trust_score": 0.6, "effective_trust": 0.6,
+         "memory_type": "semantic", "content_class": "general", "metadata": None,
+         "created_at": datetime.now(UTC), "created_by": "hermes", "source_agent": "hermes"},
+        {"id": "m2", "content": "b", "trust_score": 0.6, "effective_trust": 0.6,
+         "memory_type": "semantic", "content_class": "general", "metadata": None,
+         "created_at": datetime.now(UTC), "created_by": "hermes", "source_agent": "hermes"},
+    ]
+
+    server = _server_with_graph(_settings())
+    server.graph.search_by_entity = AsyncMock(return_value=list(result_rows))
+    server.db.fetchall = AsyncMock(return_value=[rule_row])
+
+    out = await server.dispatch("search_by_entity", {"entity_name": "Jeli"})
+    assert len(out) == 1  # ReadGate max_results capped from 2 → 1
