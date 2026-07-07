@@ -96,9 +96,10 @@ Two gates enforce rules:
 - **WriteGate** runs inside `capture_memory` **before the record is hashed**, so
   a denied write never enters the chain and any trust cap is baked into the
   attested record.
-- **ReadGate** runs as the **last step of `search_memory`, after ranking**, so no
-  query an agent constructs can bypass it. An unknown rule type fails *closed*
-  (results untouched but logged loudly) rather than silently widening exposure.
+- **ReadGate** runs as the **last step of `search_memory` and `search_by_entity`**,
+  after ranking, so no query an agent constructs can bypass it. An unknown rule
+  type fails *closed* (results untouched but logged loudly) rather than silently
+  widening exposure.
 
 Rule types:
 
@@ -114,6 +115,17 @@ Rule types:
 
 Rules honor `applies_to` scoping so a constraint can target a specific agent or
 `all`.
+
+**Trust model note on `jeli import`:** the portability importer preserves original
+trust scores from the archive so a backup restore does not downgrade memories the
+user created at user-tier (1.0). This means a maliciously crafted archive could
+introduce trust=1.0 records via `jeli import`. The defense is structural: the
+import command is a user-tier CLI surface only, never an MCP tool. An attacker
+would need to socially engineer the user into running `jeli import <malicious-file>`,
+which requires local filesystem access and deliberate user action. Operators who
+want to enforce trust ceilings on imports can add a
+`max_trust_for_content_class` constitutional rule (e.g. cap "general" at 0.6)
+before running an untrusted import.
 
 ---
 
