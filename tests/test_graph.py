@@ -169,6 +169,8 @@ class TestGraphStore:
             "created_at": datetime.now(UTC),
             "created_by": "jp-cruz",
             "source_agent": None,
+            "content_class": "general",
+            "metadata": None,
         }
         db = MagicMock()
         db.fetchall = AsyncMock(return_value=[mem_row])
@@ -177,6 +179,8 @@ class TestGraphStore:
         assert results[0]["content"] == "JP Cruz updated the memory system."
         assert "id" in results[0]
         assert "trust_score" in results[0]
+        assert "effective_trust" in results[0]
+        assert results[0]["content_class"] == "general"
 
     @pytest.mark.asyncio
     async def test_search_by_entity_clamps_limit(self):

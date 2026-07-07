@@ -101,13 +101,15 @@ class GraphStore:
         """Memories mentioning an entity (fuzzy match on name or aliases).
 
         Returns search_memory-shaped rows so callers can treat graph hits and
-        text hits uniformly.
+        text hits uniformly. Includes content_class, metadata, and effective_trust
+        so the constitutional ReadGate can be applied by the caller.
         """
         limit = max(1, min(int(limit), 50))
         rows = await db.fetchall(
             """
             SELECT DISTINCT m.id, m.content, m.trust_score, m.memory_type,
-                   m.created_at, m.created_by, m.source_agent
+                   m.created_at, m.created_by, m.source_agent,
+                   m.metadata, (m.metadata->>'content_class') AS content_class
             FROM memory_entry m
             JOIN memory_entity_link mel ON mel.memory_id = m.id
             JOIN entity e ON e.id = mel.entity_id
@@ -125,7 +127,10 @@ class GraphStore:
                 "id": str(r["id"]),
                 "content": r["content"],
                 "trust_score": float(r["trust_score"]),
+                "effective_trust": float(r["trust_score"]),  # no decay for graph hits
                 "memory_type": r["memory_type"],
+                "content_class": r["content_class"] or "general",
+                "metadata": r["metadata"],
                 "created_at": r["created_at"].isoformat(),
                 "source": r["source_agent"] or r["created_by"],
             }

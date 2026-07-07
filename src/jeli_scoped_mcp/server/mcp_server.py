@@ -327,11 +327,21 @@ class ScopedMCPServer:
         if name == "audit_trail":
             return await self.tools.audit_trail(memory_id=arguments["memory_id"], actor=actor)
         if name == "search_by_entity":
-            return await self.graph.search_by_entity(
+            # Apply constitutional ReadGate so entity searches respect the same
+            # sovereignty rules as search_memory (exclude_memory_type,
+            # min_trust_floor, exclude_content_class, etc.).
+            from ..constitutional.gate import ReadGate
+            from ..constitutional.manager import ConstitutionalManager
+
+            entity_results = await self.graph.search_by_entity(
                 self.db,
                 entity_name=arguments["entity_name"],
                 limit=arguments.get("limit", 10),
             )
+            active_rules = await ConstitutionalManager().load_active_rules(self.db)
+            if active_rules:
+                entity_results = ReadGate().apply(entity_results, actor=actor, rules=active_rules)
+            return entity_results
         if name == "get_entity_graph":
             return await self.graph.get_entity_graph(
                 self.db, entity_name=arguments["entity_name"]
