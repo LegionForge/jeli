@@ -3,9 +3,40 @@
 import hmac
 import logging
 import re
+import unicodedata
 from typing import Literal
 
 logger = logging.getLogger(__name__)
+
+# Zero-width / invisible format characters interleaved inside keywords to break
+# pattern adjacency ("ig​nore previous"). Stripped before detection only —
+# stored content is never modified.
+_ZERO_WIDTH_RE = re.compile(
+    "[\u200b\u200c\u200d"  # zero-width space / non-joiner / joiner
+    "\u2060\ufeff"  # word joiner, BOM/ZWNBSP
+    "\u00ad"  # soft hyphen
+    "\u180e"  # mongolian vowel separator
+    "\u034f]"  # combining grapheme joiner
+)
+
+# Cyrillic/Greek characters visually confusable with Latin letters, used to
+# evade keyword regexes ("іgnore" with Cyrillic і). Conservative map:
+# classic confusables only, applied for detection, never to stored content.
+_HOMOGLYPH_MAP = str.maketrans(
+    {
+        # Cyrillic lowercase
+        "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x",
+        "у": "y", "і": "i", "ѕ": "s", "ј": "j", "ԁ": "d",
+        # Cyrillic uppercase
+        "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H",
+        "О": "O", "Р": "P", "С": "C", "Т": "T", "Х": "X", "І": "I", "Ѕ": "S",
+        # Greek confusables
+        "ο": "o", "α": "a", "ε": "e", "ι": "i", "κ": "k", "ν": "v",
+        "ρ": "p", "τ": "t", "υ": "u", "Α": "A", "Β": "B", "Ε": "E",
+        "Ζ": "Z", "Η": "H", "Ι": "I", "Κ": "K", "Μ": "M", "Ν": "N",
+        "Ο": "O", "Ρ": "P", "Τ": "T", "Υ": "Y", "Χ": "X",
+    }
+)
 
 # Source trust at or above which the LLM second-pass classifier is skipped:
 # authoritative sources are not re-litigated by a probabilistic classifier
@@ -89,10 +120,25 @@ class InjectionDefense:
         "embedding_dimensions",
     }
 
+    @staticmethod
+    def normalize_for_detection(text: str) -> str:
+        """Fold unicode evasion tricks before pattern matching (GH #33).
+
+        Strips zero-width characters, NFKC-folds fullwidth/compatibility forms,
+        and maps Cyrillic/Greek confusables to Latin. Detection-only: the
+        stored memory content is never altered by this.
+        """
+        text = _ZERO_WIDTH_RE.sub("", text)
+        text = unicodedata.normalize("NFKC", text)
+        return text.translate(_HOMOGLYPH_MAP)
+
     @classmethod
     def is_instruction_like(cls, text: str) -> bool:
         """Check if text contains instruction-like patterns (prompt injection indicators)."""
-        return any(re.search(p, text, re.IGNORECASE) for p in cls.PROMPT_INJECTION_PATTERNS)
+        normalized = cls.normalize_for_detection(text)
+        return any(
+            re.search(p, normalized, re.IGNORECASE) for p in cls.PROMPT_INJECTION_PATTERNS
+        )
 
     @classmethod
     def detect_sql_injection_patterns(cls, query: str) -> bool:

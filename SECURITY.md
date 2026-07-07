@@ -135,7 +135,12 @@ Injection screening runs on the capture path in two layers:
 
 - **Layer 1 — regex pattern matching (always on).** Detects jailbreak prefixes,
   override attempts ("ignore previous instructions"), and instruction-boundary
-  markers (`<system>…</system>`). Content that matches is flagged and
+  markers (`<system>…</system>`). Before matching, content passes through a
+  **detection-only unicode normalization** (`normalize_for_detection`): zero-width
+  characters are stripped, fullwidth/compatibility forms are NFKC-folded, and
+  Cyrillic/Greek confusables are mapped to Latin — so homoglyph and invisible-
+  character evasion of the keyword patterns is caught. The stored memory content
+  is never altered by this fold. Content that matches is flagged and
   trust-capped at `FLAGGED_TRUST_CEILING` (0.3). An authoritative source
   (trust ≥ 0.9) whose content is legitimately *about* injection — e.g. a
   security note — is preserved with a recorded override reason instead of being
@@ -153,8 +158,9 @@ content). The wrapper is applied at read time and is never stored, so it cannot
 itself be chained or tampered.
 
 **Known gap (GitHub [issue #33](https://github.com/LegionForge/jeli/issues/33)):**
-the Layer-1 regex is keyword-oriented and can be evaded by unicode homoglyphs,
-whitespace injection, or a sufficiently reworded instruction. This is documented
+the Layer-1 regex is keyword-oriented; homoglyph and zero-width evasion is now
+folded away by the normalization pre-pass, but a sufficiently reworded
+natural-language instruction still slips through. This is documented
 honestly in the adversarial test suite (`tests/test_adversarial_eval.py`), which
 asserts the false negatives explicitly rather than papering over them. The Layer-2
 LLM classifier exists specifically to close this gap; it is not enabled by default
