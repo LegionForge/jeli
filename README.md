@@ -28,6 +28,8 @@ Jeli adds cryptographic integrity and governance to memory systems:
 
 Jeli is built on **three-branch governance** — separation of powers between the agents that propose memories, the store that holds them, and the engine that resolves contradictions. A cryptographically inviolable Constitutional layer sits beneath all three.
 
+> The diagram below is the conceptual model. For the code-level view — which module implements which branch, and the write/read/verify paths step by step — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), or take the [guided CodeTour](#guided-code-walkthrough-vs-code) in VS Code.
+
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'background': '#0d1117', 'mainBkg': '#161b22', 'primaryColor': '#1c2938', 'primaryBorderColor': '#30363d', 'primaryTextColor': '#e6edf3', 'lineColor': '#6e7681', 'clusterBkg': '#161b22', 'clusterBorder': '#30363d', 'edgeLabelBackground': '#161b22', 'titleColor': '#e6edf3'}}}%%
 
@@ -279,30 +281,33 @@ At personal memory scale (1k–100k records) an HNSW index at 1024 dims fits com
 
 ## Status
 
-**Current:** 
-- ✅ Full implementation plan complete (Scoped MCP Server)
-- ✅ Partnership proposal submitted to OB1 (awaiting feedback)
-- 🚧 Ready to begin Phase 1 implementation
+**Current (v0.2.0-alpha):** the full three-branch governance model is implemented and tested — Scoped MCP server (`capture_memory` / `search_memory` / `audit_trail` / `search_by_entity` / `get_entity_graph`), HMAC hash-chained writes with per-record signing-key identity, layered injection defense (regex + unicode normalization + opt-in LLM classifier), Constitutional Read/Write gates over user-signed rules, Judicial conflict resolution with precedent case law and human escalation, entity graph auto-extraction, memory portability (export/import with tamper detection), and the Ingestion Bouncer. 482 unit tests (82% coverage) + 17 live-Postgres integration tests. Index standard: `vector(1024)` — arctic-embed2 native, Qwen3-Embedding MRL ceiling, OpenAI truncatable; model swaps are re-embedding jobs, never schema migrations.
 
-**Current:** Scoped MCP server (stdio) with `capture_memory` / `search_memory` (semantic via pgvector HNSW + fts) / `audit_trail` / `verify_chain`, hash-chained writes with per-record signing-key identity, injection defense with trust capping, and the `jeli verify` CLI. Index standard: `vector(1024)` — arctic-embed2 native, Qwen3-Embedding MRL ceiling, OpenAI truncatable; model swaps are re-embedding jobs, never schema migrations.
+Deployed in production on local hardware since v0.1.0-alpha (2026-07-02).
 
 **Next:**
-- Contradiction detection on the write path (Phase 3)
-- Integrate with OB1 (if partnership approved) OR deploy standalone
-- Implement Judicial conflict resolution engine
-- Build consolidation/dreaming loop
+- OB1/lf2b integration (partnership exploration ongoing; standalone deployment works today)
+- Capture breadth decision (browser extension vs app hooks vs clipboard)
+- Default-on lightweight heuristic for natural-language injection rephrasing (GH #33 remainder)
 
 ## Quick Start
 
 ```bash
 pip install -e ".[dev]"
-pytest                       # 127 tests, no services required
+pytest                       # 482 unit tests, no services required
 alembic upgrade head         # requires PostgreSQL
 
 export SCOPED_MCP_API_KEY=...        # generate: python -c 'import secrets; print(secrets.token_urlsafe(32))'
 export SCOPED_MCP_CHAIN_KEY=...      # HMAC key for the hash chain — guard like a root credential
 python -m jeli_scoped_mcp            # stdio MCP server
 jeli verify                          # walk the chain, report first tampered record
+```
+
+Live integration tests (disposable pgvector container, auto-torn-down):
+
+```bash
+bash scripts/run_integration_tests.sh          # port 5433 by default
+JELI_TEST_DB_PORT=5599 bash scripts/run_integration_tests.sh   # if 5433 is taken
 ```
 
 ### New in v0.2.0-alpha
@@ -350,8 +355,23 @@ git config core.hooksPath .githooks
 
 ## Documentation
 
-- **Architecture & Development:** See `CLAUDE.md` in this repository
-- **Extended Documentation:** Project vision, security posture, and data integrity guidelines live in your vault
+| Doc | What it covers |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | **Code-level architecture** — module map, the write/read/verify paths step by step, data model by migration, trust model, judicial case-law semantics |
+| [SECURITY.md](SECURITY.md) | Threat model (MINJA, recommendation poisoning, IJPI) and every defense layer |
+| [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) | Extended threat analysis |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
+| `CLAUDE.md` | Development guidance for AI-assisted work in this repo |
+
+### Guided code walkthrough (VS Code)
+
+The repo ships three [CodeTour](https://marketplace.visualstudio.com/items?itemName=vsls-contrib.codetour) walkthroughs in [`.tours/`](.tours/). Install the CodeTour extension, open this repo, and the tours appear in the explorer sidebar:
+
+1. **The Write Path** — follow one memory from an agent's MCP call through injection defense, the Constitutional WriteGate, and the advisory-locked hash-chain append
+2. **Governance** — the Constitutional and Judicial branches: signed rules, read/write gates, precedent case law, human escalation
+3. **Integrity & Verify** — canonical hashing, chained state events (never delete), `jeli verify`, and portable sovereignty
+
+Tour steps anchor on code patterns rather than line numbers, so they survive refactors.
 
 ## Acknowledgements & Prior Art
 

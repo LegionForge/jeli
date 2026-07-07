@@ -35,7 +35,23 @@ corrupt and impossible to lock in.
 - Server-side `content_class` stigmatisation — externally-sourced content is
   forced to `external-untrusted` regardless of what the agent claimed.
 - Integration-test infrastructure: `docker-compose.test.yml` +
-  `scripts/run_integration_tests.sh` for one-command local live-Postgres runs.
+  `scripts/run_integration_tests.sh` for one-command local live-Postgres runs
+  (`JELI_TEST_DB_PORT` overrides the host port when 5433 is taken).
+- **Unicode normalization pre-pass** (GH #33, homoglyph half) — injection
+  detection folds zero-width characters, fullwidth forms, and Cyrillic/Greek
+  confusables before pattern matching. Detection-only; stored content is
+  never altered.
+- `constitutional verify` now re-signs **revoked rules too** — retired
+  history stays tamper-evident (`load_all_rules`, `revoked_checked` count).
+- **Judicial case-law semantics** — a dissenting deliberation no longer
+  overwrites settled precedent: agreement reinforces, dissent erodes
+  confidence, and only sustained dissent below `OVERTURN_FLOOR` (0.3)
+  overturns the resolution.
+- **docs/ARCHITECTURE.md** — code-level architecture: module map, the
+  write/read/verify paths, data model by migration, trust model.
+- **CodeTour walkthroughs** (`.tours/`) — three guided in-editor tours for
+  VS Code: the write path, governance, and integrity/verify. Steps anchor on
+  code patterns, not line numbers.
 
 ### Changed
 - `capture_memory` runs the write path through the Constitutional `WriteGate`
