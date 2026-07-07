@@ -203,18 +203,52 @@ class ConflictResolverDaemon:
 
             for flag in flags:
                 flags_count += 1
+                ctype = flag.contradiction_type.value
                 if flag.severity == ContradictionSeverity.HIGH:
-                    await self._resolve_high(new_mem, old_mem, flag.reason)
+                    await self._resolve_high(new_mem, old_mem, flag.reason, ctype)
                 elif flag.severity == ContradictionSeverity.MEDIUM:
-                    await self._log_conflict(new_mem["id"], old_mem["id"], flag.reason, "medium")
+                    await self._log_conflict(
+                        new_mem["id"], old_mem["id"], flag.reason, "medium", ctype
+                    )
 
         return flags_count
 
-    async def _resolve_high(self, new_mem: dict, old_mem: dict, reason: str) -> None:
-        """Deterministic resolution: higher trust wins; newer wins on tie."""
+    async def _resolve_high(
+        self, new_mem: dict, old_mem: dict, reason: str, contradiction_type: str = "direct"
+    ) -> None:
+        """Resolve a HIGH conflict via precedent, else deliberate and set precedent.
+
+        The deterministic rule is unchanged (higher trust wins; newer wins on
+        tie). What is new is the case-law layer: if a confident precedent already
+        covers this conflict pattern it is reinforced rather than re-derived;
+        otherwise the fresh outcome is recorded as precedent so it accrues
+        authority over repeated agreement.
+        """
+        from ..judicial.precedent import PrecedentStore
+
+        store = PrecedentStore()
+        phash = store.pattern_hash(
+            contradiction_type, new_mem["memory_type"], old_mem["memory_type"]
+        )
+
         new_trust = new_mem["trust_score"]
         old_trust = old_mem["trust_score"]
+        if new_trust != old_trust:
+            resolution = "trust_wins"
+            winner_rule = "higher trust_score prevails"
+        else:
+            resolution = "newer_wins"
+            winner_rule = "newer memory prevails on trust tie"
         loser_id = old_mem["id"] if new_trust >= old_trust else new_mem["id"]
+
+        precedent = await store.lookup(self.db, phash)
+        precedent_applied = precedent is not None and precedent.confidence >= 0.7
+        if precedent_applied:
+            await store.reinforce(self.db, precedent.id)  # type: ignore[union-attr]
+        else:
+            await store.record(
+                self.db, phash, contradiction_type, resolution, winner_rule
+            )
 
         from ..tools.memory_tools import MemoryTools
         from ..tools.state_tools import StateTools
@@ -227,12 +261,36 @@ class ConflictResolverDaemon:
             reason=f"conflict-resolver: {reason}",
             actor=f"conflict-resolver/{self.worker_id}",
         )
+        await self.db.execute(
+            """
+            INSERT INTO memory_audit_log (memory_id, action, actor, details)
+            VALUES ($1, 'conflict_resolved', $2, $3::jsonb)
+            """,
+            loser_id,
+            f"conflict-resolver/{self.worker_id}",
+            json.dumps(
+                {
+                    "reason": reason,
+                    "contradiction_type": contradiction_type,
+                    "resolution": resolution,
+                    "precedent_applied": precedent_applied,
+                }
+            ),
+        )
         logger.info(
-            "conflict resolver: invalidated %s (reason: %s)", loser_id, reason
+            "conflict resolver: invalidated %s (reason: %s, precedent_applied=%s)",
+            loser_id,
+            reason,
+            precedent_applied,
         )
 
     async def _log_conflict(
-        self, memory_id: str, conflicting_id: str, reason: str, severity: str
+        self,
+        memory_id: str,
+        conflicting_id: str,
+        reason: str,
+        severity: str,
+        contradiction_type: str = "direct",
     ) -> None:
         await self.db.execute(
             """
@@ -249,3 +307,35 @@ class ConflictResolverDaemon:
                 }
             ),
         )
+
+        # A MEDIUM conflict that keeps re-flagging without settling is one the
+        # resolver will not decide on its own — escalate it to the user.
+        if await self._check_escalation_needed(memory_id):
+            from ..judicial.escalation import HumanEscalationQueue
+
+            queue = HumanEscalationQueue()
+            entry_id = await queue.enqueue(
+                self.db, memory_id, conflicting_id, contradiction_type, reason, severity
+            )
+            await self.db.execute(
+                """
+                INSERT INTO memory_audit_log (memory_id, action, actor, details)
+                VALUES ($1, 'conflict_escalated', $2, $3::jsonb)
+                """,
+                memory_id,
+                f"conflict-resolver/{self.worker_id}",
+                json.dumps({"queue_entry_id": entry_id, "reason": reason}),
+            )
+
+    async def _check_escalation_needed(self, memory_id: str) -> bool:
+        """True once a memory has been conflict_flagged 3+ times recently."""
+        count = await self.db.fetchval(
+            """
+            SELECT count(*) FROM memory_audit_log
+            WHERE memory_id = $1
+              AND action = 'conflict_flagged'
+              AND created_at > now() - interval '7 days'
+            """,
+            memory_id,
+        )
+        return bool(count is not None and count >= 3)

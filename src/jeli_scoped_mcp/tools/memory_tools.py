@@ -14,7 +14,7 @@ import hashlib
 import json
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..core.hash_chain import (
     HashChainValidator,
@@ -26,6 +26,9 @@ from ..database.pool import AsyncPostgresPool
 from ..embedding.provider import EmbeddingProvider
 from ..reranker.provider import NullReranker, RerankerProvider
 from ..security import InjectionDefense
+
+if TYPE_CHECKING:
+    from ..graph.store import GraphStore
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +94,8 @@ class MemoryTools:
         key_id: str = "k1",
         key_registry: dict[str, str] | None = None,
         reranker: RerankerProvider | None = None,
+        llm_model: str | None = None,
+        graph_store: "GraphStore | None" = None,
     ):
         self.db = db
         self.embedder = embedder
@@ -101,6 +106,13 @@ class MemoryTools:
         self.key_registry = dict(key_registry or {})
         self.key_registry.setdefault(key_id, chain_key)
         self.reranker: RerankerProvider = reranker or NullReranker()
+        # Optional LLM second-pass injection classifier (GH #33). When set,
+        # regex-clean low-trust writes get a natural-language check that catches
+        # the keyword-free evasions the patterns miss.
+        self._llm_model = llm_model
+        # Optional entity-graph sink. When set, capture_memory extracts named
+        # entities (best-effort) and links them to the stored memory.
+        self._graph_store = graph_store
 
     # ── capture_memory ───────────────────────────────────────────────────────
 
@@ -145,6 +157,38 @@ class MemoryTools:
             else:
                 # Unknown/low-trust source: cap authority so the judicial layer
                 # treats it as external-grade evidence.
+                trust = min(trust, FLAGGED_TRUST_CEILING)
+
+        # Constitutional Write Gate — inviolable by agents. A denied write never
+        # enters the chain; a trust cap is applied before the record is hashed.
+        from ..constitutional.gate import WriteGate
+        from ..constitutional.manager import ConstitutionalManager
+
+        _active_rules = await ConstitutionalManager().load_active_rules(self.db)
+        if _active_rules:
+            _allowed, trust, _block_reason = WriteGate().check(
+                memory_type=memory_type,
+                content_class=content_class,
+                trust_score=trust,
+                actor=actor,
+                rules=_active_rules,
+            )
+            if not _allowed:
+                raise MemoryToolError(f"constitutional write gate blocked: {_block_reason}")
+
+        # LLM second-pass: only for regex-clean content (the classifier and
+        # trust-skip logic live in sanitize_content_async, GH #33).
+        if not flagged and self._llm_model:
+            _, llm_flagged, _ = await InjectionDefense.sanitize_content_async(
+                content,
+                source_trust=trust,
+                content_class=content_class,
+                llm_model=self._llm_model,
+            )
+            if llm_flagged:
+                flagged = True
+                meta["injection_flagged"] = True
+                meta["llm_injection_flagged"] = True
                 trust = min(trust, FLAGGED_TRUST_CEILING)
 
         embedding = await self.embedder.embed(content)
@@ -233,6 +277,22 @@ class MemoryTools:
                     }
                 ),
             )
+
+        # Entity extraction — best-effort, never fails the write.
+        if self._graph_store is not None:
+            try:
+                from ..graph.extractor import EntityExtractor
+
+                entities = EntityExtractor().extract(content)
+                for ent in entities:
+                    eid = await self._graph_store.upsert_entity(
+                        self.db, ent["name"], ent["entity_type"]
+                    )
+                    await self._graph_store.link_memory(
+                        self.db, str(row["id"]), eid, confidence=ent["confidence"]
+                    )
+            except Exception:
+                logger.warning("entity extraction failed for %s", row["id"], exc_info=True)
 
         logger.info(
             "capture_memory: id=%s type=%s trust=%.2f flagged=%s actor=%s",
@@ -431,6 +491,15 @@ class MemoryTools:
         if rerank and mode == "semantic" and results:
             results = await self.reranker.rerank(query, results)
             results = results[:limit]
+
+        # Constitutional gate — applied last, cannot be bypassed by agents.
+        # The user's signed rules are the final word on what leaves the store.
+        from ..constitutional.gate import ReadGate
+        from ..constitutional.manager import ConstitutionalManager
+
+        active_rules = await ConstitutionalManager().load_active_rules(self.db)
+        if active_rules:
+            results = ReadGate().apply(results, actor=actor, rules=active_rules)
 
         return results
 

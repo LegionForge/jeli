@@ -59,6 +59,11 @@ mlx = [
     "sentence-transformers>=3.0.0",
     "torch>=2.3.0",
 ]
+llm = [
+    # LLM second-pass injection classifier (GH #33). Opt-in: the classifier is
+    # only active when a model is configured, so this stays out of core deps.
+    "litellm>=1.40.0",
+]
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
