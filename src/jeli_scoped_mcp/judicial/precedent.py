@@ -17,6 +17,12 @@ from typing import Any, Protocol
 CONFIDENCE_STEP = 0.1
 CONFIDENCE_CEILING = 1.0
 
+# A disagreeing deliberation erodes confidence by CONFIDENCE_STEP; the standing
+# resolution is kept until erosion drops confidence below this floor, at which
+# point the precedent is overturned: the new resolution takes over at the base
+# confidence and the applied count restarts. One dissent never flips case law.
+OVERTURN_FLOOR = 0.3
+
 
 class _DB(Protocol):
     async def fetchrow(self, query: str, *args: Any) -> Any: ...
@@ -84,12 +90,18 @@ class PrecedentStore:
         winner_rule: str,
         confidence: float = 0.5,
     ) -> JudicialPrecedent:
-        """Insert a new precedent, or reinforce an existing one for this pattern.
+        """Insert a new precedent, or fold a fresh deliberation into the row.
 
-        UNIQUE(pattern_hash) means a second fresh deliberation of the same
-        pattern folds into the existing row: applied_count grows and confidence
-        climbs toward the apply threshold, so repeated agreement is what earns a
-        precedent its authority.
+        UNIQUE(pattern_hash) means repeat deliberations of the same pattern land
+        on the existing row, with real case-law semantics:
+
+        - **Agreement** (same resolution): applied_count grows, confidence
+          climbs toward the ceiling — repeated agreement earns authority.
+        - **Disagreement**: the standing resolution is KEPT and confidence
+          erodes by one step. A single dissent never rewrites settled law.
+        - **Overturn**: once erosion would drop confidence below OVERTURN_FLOOR,
+          the new resolution replaces the old at base confidence and the
+          applied count restarts at 1.
         """
         row = await db.fetchrow(
             """
@@ -97,10 +109,32 @@ class PrecedentStore:
                 (pattern_hash, contradiction_type, resolution, winner_rule, confidence)
             VALUES ($1, $2, $3, $4, $5)
             ON CONFLICT (pattern_hash) DO UPDATE SET
-                applied_count = judicial_precedent.applied_count + 1,
-                confidence = LEAST($6, judicial_precedent.confidence + $7),
-                resolution = EXCLUDED.resolution,
-                winner_rule = EXCLUDED.winner_rule,
+                applied_count = CASE
+                    WHEN judicial_precedent.resolution = EXCLUDED.resolution
+                        THEN judicial_precedent.applied_count + 1
+                    WHEN judicial_precedent.confidence - $7 < $8
+                        THEN 1
+                    ELSE judicial_precedent.applied_count
+                END,
+                confidence = CASE
+                    WHEN judicial_precedent.resolution = EXCLUDED.resolution
+                        THEN LEAST($6, judicial_precedent.confidence + $7)
+                    WHEN judicial_precedent.confidence - $7 < $8
+                        THEN $5
+                    ELSE GREATEST(0.0, judicial_precedent.confidence - $7)
+                END,
+                resolution = CASE
+                    WHEN judicial_precedent.resolution = EXCLUDED.resolution
+                         OR judicial_precedent.confidence - $7 >= $8
+                        THEN judicial_precedent.resolution
+                    ELSE EXCLUDED.resolution
+                END,
+                winner_rule = CASE
+                    WHEN judicial_precedent.resolution = EXCLUDED.resolution
+                         OR judicial_precedent.confidence - $7 >= $8
+                        THEN judicial_precedent.winner_rule
+                    ELSE EXCLUDED.winner_rule
+                END,
                 last_applied_at = now()
             RETURNING *
             """,
@@ -111,6 +145,7 @@ class PrecedentStore:
             confidence,
             CONFIDENCE_CEILING,
             CONFIDENCE_STEP,
+            OVERTURN_FLOOR,
         )
         return JudicialPrecedent.from_row(row)
 

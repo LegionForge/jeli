@@ -6,6 +6,7 @@ set -euo pipefail
 # the project venv active (the integration tests import jeli_scoped_mcp).
 
 COMPOSE_FILE="docker-compose.test.yml"
+TEST_DB_PORT="${JELI_TEST_DB_PORT:-5433}"
 
 cleanup() {
   docker compose -f "$COMPOSE_FILE" down -v
@@ -26,7 +27,7 @@ done
 
 # Run migrations against test DB (alembic needs DDL privileges; the container's
 # POSTGRES_USER is a superuser of jeli_test, so app and admin URLs coincide).
-export SCOPED_MCP_DB_URL="postgresql://jeli_test:jeli_test_password@localhost:5433/jeli_test"
+export SCOPED_MCP_DB_URL="postgresql://jeli_test:jeli_test_password@localhost:${TEST_DB_PORT}/jeli_test"
 export SCOPED_MCP_ADMIN_DB_URL="$SCOPED_MCP_DB_URL"
 python -m alembic upgrade head
 
