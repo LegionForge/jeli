@@ -102,6 +102,63 @@ class TestEntityExtractor:
         relations = self.ex.extract_relations(entities)
         assert len(relations) <= 20
 
+    def test_extract_email_domain_as_organization(self):
+        """Email addresses yield the domain as an organization entity."""
+        results = self.ex.extract("Contact support@example.org for help.")
+        names = [r["name"] for r in results]
+        assert "example.org" in names
+        org = next(r for r in results if r["name"] == "example.org")
+        assert org["entity_type"] == "organization"
+        assert org["confidence"] == pytest.approx(0.7)
+
+    def test_extract_person_token_overlaps_gazetteer_skipped(self):
+        """'Docker User' — 'Docker' is in the gazetteer, so the person match is skipped."""
+        results = self.ex.extract("Docker User deployed the stack.")
+        names = [r["name"] for r in results]
+        assert "Docker User" not in names
+        # The gazetteer still picks up Docker as a technology.
+        assert "Docker" in names
+
+    def test_extract_exact_phrase_in_keyword_names_skipped(self):
+        """A person-regex match whose full lowercased form is in keyword_names is skipped."""
+        # Add "Nate Jones" as a keyword so it appears in keyword_names.
+        ex = EntityExtractor(extra_keywords={"Nate Jones": "person"})
+        results = ex.extract("Nate Jones attended the meeting.")
+        nate = [r for r in results if r["name"] == "Nate Jones"]
+        # Gazetteer wins (confidence 0.9); the person-heuristic path is skipped.
+        assert len(nate) == 1
+        assert nate[0]["confidence"] == pytest.approx(0.9)
+
+    def test_extract_relations_person_member_of_org(self):
+        """person + organization → member_of edge."""
+        entities = [
+            {"name": "JP Cruz", "entity_type": "person", "confidence": 0.7},
+            {"name": "LegionForge", "entity_type": "organization", "confidence": 0.9},
+        ]
+        relations = self.ex.extract_relations(entities)
+        triples = {(s, p, o) for s, p, o, _ in relations}
+        assert ("JP Cruz", "member_of", "LegionForge") in triples
+
+    def test_extract_relations_project_uses_tech(self):
+        """project + technology → uses edge."""
+        entities = [
+            {"name": "Jeli", "entity_type": "project", "confidence": 0.9},
+            {"name": "PostgreSQL", "entity_type": "technology", "confidence": 0.9},
+        ]
+        relations = self.ex.extract_relations(entities)
+        triples = {(s, p, o) for s, p, o, _ in relations}
+        assert ("Jeli", "uses", "PostgreSQL") in triples
+
+    def test_extract_relations_org_develops_project(self):
+        """organization + project → develops edge."""
+        entities = [
+            {"name": "LegionForge", "entity_type": "organization", "confidence": 0.9},
+            {"name": "Jeli", "entity_type": "project", "confidence": 0.9},
+        ]
+        relations = self.ex.extract_relations(entities)
+        triples = {(s, p, o) for s, p, o, _ in relations}
+        assert ("LegionForge", "develops", "Jeli") in triples
+
 
 # ── GraphStore ────────────────────────────────────────────────────────────────
 

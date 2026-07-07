@@ -239,3 +239,68 @@ def test_search_schema_declares_scope_filters():
     search = next(t for t in TOOL_DEFINITIONS if t["name"] == "search_memory")
     props = search["inputSchema"]["properties"]
     assert {"memory_type", "min_trust", "content_class", "project"} <= set(props)
+
+
+# ── entity tools ─────────────────────────────────────────────────────────────
+
+
+def _server_with_graph(settings: Settings) -> ScopedMCPServer:
+    """Like _server() but also wires up a mock graph attribute and async DB methods."""
+    server = _server(settings)
+    server.db.fetchall = AsyncMock(return_value=[])  # ConstitutionalManager.load_active_rules
+    server.graph = MagicMock()
+    server.graph.search_by_entity = AsyncMock(return_value=[])
+    server.graph.get_entity_graph = AsyncMock(return_value={"nodes": [], "edges": []})
+    return server
+
+
+async def test_dispatch_search_by_entity_returns_results():
+    server = _server_with_graph(_settings())
+    result = await server.dispatch("search_by_entity", {"entity_name": "Jeli"})
+    server.graph.search_by_entity.assert_awaited_once()
+    assert isinstance(result, list)
+
+
+async def test_dispatch_search_by_entity_applies_readgate():
+    """ReadGate is applied to search_by_entity results (sovereignty gap fix f52b381)."""
+    server = _server_with_graph(_settings())
+    # No active constitutional rules in the mock pool → ReadGate is a no-op.
+    server.db.fetchall = AsyncMock(return_value=[])
+    result = await server.dispatch("search_by_entity", {"entity_name": "Jeli", "limit": 5})
+    server.graph.search_by_entity.assert_awaited_once()
+    assert isinstance(result, list)
+
+
+async def test_dispatch_get_entity_graph():
+    server = _server_with_graph(_settings())
+    result = await server.dispatch("get_entity_graph", {"entity_name": "Jeli"})
+    server.graph.get_entity_graph.assert_awaited_once()
+    assert "nodes" in result
+
+
+async def test_run_http_raises_not_implemented():
+    server = _server(_settings())
+    with pytest.raises(NotImplementedError):
+        await server.run_http()
+
+
+# ── _submit_to_inbox edge cases ───────────────────────────────────────────────
+
+
+async def test_submit_to_inbox_empty_content_rejected():
+    server = _server(_settings())
+    with pytest.raises(MemoryToolError, match="non-empty"):
+        await server._submit_to_inbox(
+            {"content": "   ", "trust_score": 0.5, "memory_type": "episodic"},
+            actor="hermes",
+        )
+
+
+async def test_submit_to_inbox_row_none_raises():
+    server = _server(_settings())
+    server.db.fetchrow = AsyncMock(return_value=None)
+    with pytest.raises(MemoryToolError, match="inbox insert failed"):
+        await server._submit_to_inbox(
+            {"content": "hello world", "trust_score": 0.5, "memory_type": "episodic"},
+            actor="hermes",
+        )

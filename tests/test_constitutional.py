@@ -412,3 +412,74 @@ async def test_add_rule_invalidates_cache():
     rules = await mgr.load_active_rules(pool)
     assert pool.fetchall_calls == 2
     assert len(rules) == 1
+
+
+# ── add_rule validation branches ─────────────────────────────────────────────
+
+
+async def test_add_rule_rejects_non_dict_parameters():
+    pool = FakePool()
+    mgr = ConstitutionalManager()
+    with pytest.raises(ConstitutionalError, match="parameters must be"):
+        await mgr.add_rule(
+            pool,
+            chain_key=CHAIN_KEY,
+            key_id="k1",
+            rule_type="exclude_memory_type",
+            parameters="not-a-dict",  # type: ignore[arg-type]
+            description="bad rule",
+        )
+
+
+async def test_add_rule_rejects_empty_description():
+    pool = FakePool()
+    mgr = ConstitutionalManager()
+    with pytest.raises(ConstitutionalError, match="description is required"):
+        await mgr.add_rule(
+            pool,
+            chain_key=CHAIN_KEY,
+            key_id="k1",
+            rule_type="exclude_memory_type",
+            parameters={"memory_type": "transient"},
+            description="   ",
+        )
+
+
+async def test_add_rule_raises_when_fetchrow_returns_none():
+    """insert failed → fetchrow returns None → ConstitutionalError."""
+    class NullInsertPool(FakePool):
+        async def fetchrow(self, query, *args):
+            return None  # simulate failed INSERT
+
+    pool = NullInsertPool()
+    mgr = ConstitutionalManager()
+    with pytest.raises(ConstitutionalError, match="insert failed"):
+        await mgr.add_rule(
+            pool,
+            chain_key=CHAIN_KEY,
+            key_id="k1",
+            rule_type="exclude_memory_type",
+            parameters={"memory_type": "transient"},
+            description="Valid description",
+        )
+
+
+def test_row_to_rule_parses_string_parameters():
+    """_row_to_rule handles parameters stored as a JSON string (older Postgres drivers)."""
+    import json as _json
+    from datetime import UTC, datetime
+    row = {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "rule_type": "exclude_memory_type",
+        "parameters": _json.dumps({"memory_type": "transient"}),  # string, not dict
+        "description": "test",
+        "applies_to": "all",
+        "active": True,
+        "created_at": datetime.now(UTC),
+        "revoked_at": None,
+        "rule_hash": "x",
+        "key_id": "k1",
+    }
+    rule = ConstitutionalManager._row_to_rule(row)
+    assert rule.parameters == {"memory_type": "transient"}
+    assert isinstance(rule.parameters, dict)
