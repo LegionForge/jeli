@@ -10,6 +10,8 @@ from jeli_scoped_mcp import cli
 class FakeSettings:
     chain_key = "test-chain-key"
     db_url = "postgresql://unused"
+    key_provider = "env"  # default: CLI skips provider resolution
+    key_ref = ""
 
 
 def _patch(monkeypatch, verify_result, chain_key="test-chain-key"):

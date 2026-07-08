@@ -349,6 +349,8 @@ The three-branch governance model and the poisoning defenses are now usable from
 | `SCOPED_MCP_API_KEY` | *(required)* | server auth key |
 | `SCOPED_MCP_CHAIN_KEY` | *(required)* | HMAC signing key for the hash chain |
 | `SCOPED_MCP_CHAIN_KEY_ID` | `k1` | identity of the active chain key (rotation: new key ⇒ new id; old records verify under their own key) |
+| `SCOPED_MCP_KEY_PROVIDER` | `env` | where the chain key comes from: `env`, `file`, `keychain`, `1password`, `passphrase`. See [docs/key-management.md](docs/key-management.md) |
+| `SCOPED_MCP_KEY_REF` | *(empty)* | provider-specific locator (file path, keychain service, `op://` reference, or hex salt for the passphrase KDF) |
 | `SCOPED_MCP_AGENT_ACTOR` | `unknown-agent` | principal stamped on every write/audit row; set per agent instance; not settable by the agent itself |
 | `SCOPED_MCP_EMBEDDING_PROVIDER` | `ollama` | local-first; `openai` is the opt-in (truncated to 1024 dims) |
 | `OLLAMA_MODEL` | `snowflake-arctic-embed2` | must emit 1024 dims (the index standard); `qwen3-embedding` also supported |
@@ -370,6 +372,7 @@ git config core.hooksPath .githooks
 | [docs/background.md](docs/background.md) | **Why Jeli exists**: the driver (memory poisoning + memory enclosure), why governance instead of filters, the reasoning behind the 2026-07 hardening decisions, and where Jeli sits in the memory landscape |
 | [docs/trust-doctrine.md](docs/trust-doctrine.md) | **The epistemic foundation**: why a system can verify attribution but never truth, the user as the one firsthand sensor, ingestion-as-witnessing vs import-as-hearsay, and the verify-vs-support asymmetry every trust decision answers to |
 | [docs/design-directions.md](docs/design-directions.md) | **Exploratory (not ratified)**: expanded threat model, and candidate directions from an adversarial design discussion (no single point of failure, identity-bound writes, RBAC + data compartmentalization, multi-principal / succession, a daemon fleet, governed forgetting, sovereignty as defense-in-depth) |
+| [docs/key-management.md](docs/key-management.md) | **Pluggable chain-key providers**: the key-material tier (env, file, keychain, 1Password, passphrase) that ships today, and the signing-oracle tier (OpenBAO, KMS, HSM, FIDO2) that is the tracked next step |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | **Code-level architecture**: module map, the write/read/verify paths step by step, data model by migration, trust model, judicial case-law semantics |
 | [SECURITY.md](SECURITY.md) | Threat model (MINJA, recommendation poisoning, IJPI) and every defense layer |
 | [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) | Extended threat analysis |

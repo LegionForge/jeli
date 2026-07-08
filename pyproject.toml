@@ -64,6 +64,11 @@ llm = [
     # only active when a model is configured, so this stays out of core deps.
     "litellm>=1.40.0",
 ]
+keychain = [
+    # OS keychain chain-key provider (SCOPED_MCP_KEY_PROVIDER=keychain).
+    # Optional: the provider falls back to the macOS `security` CLI without it.
+    "keyring>=24.0.0",
+]
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",

@@ -838,6 +838,17 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     settings = Settings()
+    # Resolve the chain key via the configured provider (default "env" is a
+    # no-op that returns the value already loaded). Populates settings.chain_key
+    # so every downstream consumer is unchanged.
+    if settings.key_provider != "env":
+        from .keyprovider import KeyProviderError, resolve_chain_key
+
+        try:
+            settings.chain_key = resolve_chain_key(settings)
+        except KeyProviderError as exc:
+            print(f"error: chain key ({settings.key_provider}): {exc}", file=sys.stderr)
+            return 2
     if not settings.chain_key:
         print("error: SCOPED_MCP_CHAIN_KEY is not set", file=sys.stderr)
         return 2
