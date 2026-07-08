@@ -2,6 +2,12 @@
 
 > A security and governance layer for personal memory systems. Cryptographically verifiable. Poison-resistant. Sovereign.
 
+## Why "Jeli"?
+
+A [jeli](https://en.wikipedia.org/wiki/Griot) (ߖߋ߬ߟߌ, the northern Mande name for a griot) is a West African oral historian — the living memory of a community. For centuries, jelis have carried genealogies, histories, and agreements across generations, trusted precisely because the role carries accountability: a jeli's word is verifiable against the community's collective memory, and a jeli serves as **mediator** when accounts conflict.
+
+That is exactly what this project does for personal AI memory: keep the record faithfully (hash-chained provenance), attest where every fact came from (trust-scored writes), mediate when memories contradict (the judicial layer), and answer to the person whose memory it keeps — never to the systems writing into it (the constitutional layer). The name is a commitment: memory as a trust, not a commodity.
+
 ## The Problem
 
 As of 2026, memory poisoning attacks are documented and active:
@@ -357,6 +363,7 @@ git config core.hooksPath .githooks
 
 | Doc | What it covers |
 |---|---|
+| [docs/background.md](docs/background.md) | **Why Jeli exists** — the driver (memory poisoning + memory enclosure), why governance instead of filters, the reasoning behind the 2026-07 hardening decisions, and where Jeli sits in the memory landscape |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | **Code-level architecture** — module map, the write/read/verify paths step by step, data model by migration, trust model, judicial case-law semantics |
 | [SECURITY.md](SECURITY.md) | Threat model (MINJA, recommendation poisoning, IJPI) and every defense layer |
 | [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) | Extended threat analysis |
