@@ -220,3 +220,61 @@ async def test_search_memory_rerank_true_fts_skips_reranker():
 
     await tools.search_memory("q", "actor", mode="fts", limit=5, rerank=True)
     mock_reranker.rerank.assert_not_called()
+
+
+# ── safety-aware penalty (MemoryGraft defense) ────────────────────────────────
+
+
+from jeli_scoped_mcp.reranker.provider import apply_safety_penalty  # noqa: E402
+
+
+def _candidate(**kw):
+    base = {"content": "x", "relevance_score": 0.9, "effective_trust": 0.9,
+            "injection_flagged": False}
+    base.update(kw)
+    return base
+
+
+class TestSafetyPenalty:
+    def test_flagged_demoted_below_unflagged(self):
+        """Equal relevance: an injection-flagged result must rank below a clean one."""
+        flagged = _candidate(content="poisoned", injection_flagged=True)
+        clean = _candidate(content="legit")
+        out = apply_safety_penalty([flagged, clean])
+        assert out[0]["content"] == "legit"
+        assert out[0]["relevance_score"] > out[1]["relevance_score"]
+
+    def test_lower_trust_demoted(self):
+        """Equal relevance: lower effective trust ranks lower."""
+        low = _candidate(content="low", effective_trust=0.3)
+        high = _candidate(content="high", effective_trust=0.9)
+        out = apply_safety_penalty([low, high])
+        assert out[0]["content"] == "high"
+
+    def test_similarity_cannot_outrank_flag(self):
+        """A poisoned entry engineered for perfect similarity still loses to a
+        moderately relevant trusted one — the MemoryGraft scenario."""
+        poisoned = _candidate(
+            content="grafted procedure", relevance_score=1.0,
+            effective_trust=0.3, injection_flagged=True,
+        )
+        trusted = _candidate(content="real procedure", relevance_score=0.6,
+                             effective_trust=1.0)
+        out = apply_safety_penalty([poisoned, trusted])
+        assert out[0]["content"] == "real procedure"
+
+    def test_missing_relevance_score_falls_back_to_distance(self):
+        """Candidates without relevance_score derive it from vector distance."""
+        c = _candidate(content="a")
+        del c["relevance_score"]
+        c["distance"] = 0.2
+        out = apply_safety_penalty([c])
+        assert out[0]["relevance_score"] == pytest.approx((1.0 - 0.2) * (0.5 + 0.5 * 0.9))
+
+    def test_trust_falls_back_to_stored_score(self):
+        """No effective_trust key → stored trust_score is used."""
+        c = _candidate(content="a")
+        del c["effective_trust"]
+        c["trust_score"] = 0.4
+        out = apply_safety_penalty([c])
+        assert out[0]["relevance_score"] == pytest.approx(0.9 * (0.5 + 0.5 * 0.4))

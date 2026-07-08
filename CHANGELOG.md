@@ -52,6 +52,16 @@ corrupt and impossible to lock in.
 - **CodeTour walkthroughs** (`.tours/`) — three guided in-editor tours for
   VS Code: the write path, governance, and integrity/verify. Steps anchor on
   code patterns, not line numbers.
+- **Anti-laundering trust inheritance** — cluster-synthesized insights now
+  inherit `min(source trusts)` (capped at 0.5), exclude injection-flagged
+  members from synthesis input, and record `derived_from` lineage. Closes
+  the consolidation laundering channel (MemLineage/TMA-NM pattern).
+- **Unverified-procedure wrapping** — procedural memories below effective
+  trust 0.7 get a read-time `<jeli:unverified-procedure>` do-not-imitate
+  envelope (MemoryGraft defense).
+- **Safety-aware re-ranking** — `rerank=true` now applies a deterministic
+  trust/flag penalty after relevance scoring, so engineered similarity
+  cannot outrank provenance.
 
 ### Changed
 - `capture_memory` runs the write path through the Constitutional `WriteGate`

@@ -236,3 +236,66 @@ async def test_cluster_scan_skips_empty_text_synthesis():
     assert result["synthesis_used"] is False
     written = daemon.memory_tools.capture_memory.await_args.kwargs["content"]
     assert written.startswith("Cluster: ")
+
+
+# ── anti-laundering: trust inheritance + flagged exclusion (MemLineage) ──────
+
+
+@pytest.mark.asyncio
+async def test_cluster_trust_inherits_minimum_of_sources():
+    """Derived insight trust = min(source trusts), not a flat base."""
+    main = [{"id": "a", "content": "alpha", "memory_type": "semantic",
+             "embedding": "[0.1]", "trust_score": 0.9}]
+    neighbors = [
+        {"id": "b", "content": "beta", "trust_score": 0.3},
+        {"id": "c", "content": "gamma", "trust_score": 0.6},
+    ]
+    db = _cluster_db(main, neighbors)
+    daemon = _daemon(db, _settings())
+
+    await daemon._cluster_scan()
+
+    kwargs = daemon.memory_tools.capture_memory.await_args.kwargs
+    assert kwargs["trust_score"] == pytest.approx(0.3)  # weakest source wins
+    assert kwargs["metadata"]["derived_from"] == ["a", "b", "c"]
+    assert kwargs["metadata"]["source_trust_min"] == pytest.approx(0.3)
+
+
+@pytest.mark.asyncio
+async def test_cluster_trust_capped_at_base_even_for_trusted_sources():
+    """All-high-trust sources still cap at CLUSTER_BASE_TRUST — a synthesis is
+    agent-derived content, never user-tier."""
+    main = [{"id": "a", "content": "alpha", "memory_type": "semantic",
+             "embedding": "[0.1]", "trust_score": 1.0}]
+    neighbors = [
+        {"id": "b", "content": "beta", "trust_score": 0.9},
+        {"id": "c", "content": "gamma", "trust_score": 0.9},
+    ]
+    db = _cluster_db(main, neighbors)
+    daemon = _daemon(db, _settings())
+
+    await daemon._cluster_scan()
+
+    kwargs = daemon.memory_tools.capture_memory.await_args.kwargs
+    assert kwargs["trust_score"] == pytest.approx(daemon.CLUSTER_BASE_TRUST)
+
+
+@pytest.mark.asyncio
+async def test_cluster_queries_exclude_injection_flagged():
+    """Both the seed query and the neighbor query filter out flagged memories,
+    so quarantined content never reaches the synthesis LLM."""
+    main = [{"id": "a", "content": "alpha", "memory_type": "semantic",
+             "embedding": "[0.1]", "trust_score": 0.8}]
+    neighbors = [
+        {"id": "b", "content": "beta", "trust_score": 0.8},
+        {"id": "c", "content": "gamma", "trust_score": 0.8},
+    ]
+    db = _cluster_db(main, neighbors)
+    daemon = _daemon(db, _settings())
+
+    await daemon._cluster_scan()
+
+    seed_query = db.fetchall.await_args_list[0].args[0]
+    neighbor_query = db.fetchall.await_args_list[1].args[0]
+    assert "injection_flagged" in seed_query
+    assert "injection_flagged" in neighbor_query

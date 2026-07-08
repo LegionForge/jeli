@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 class InsightsDaemon:
     MIN_CLUSTER_SIZE = 3
     CLUSTER_DISTANCE_THRESHOLD = 0.25
+    # Ceiling for daemon-synthesized insights. The actual stored trust is
+    # min(this, lowest member trust) — derived content never outranks its
+    # weakest source (anti-laundering, MemLineage pattern).
+    CLUSTER_BASE_TRUST = 0.5
     STALE_PROCEDURAL_DAYS = 30
     WEAK_SIGNAL_MAX_COUNT = 2
     WEAK_SIGNAL_MAX_TRUST = 0.6
@@ -46,14 +50,22 @@ class InsightsDaemon:
         return results
 
     async def _cluster_scan(self) -> dict:
-        """Find semantic clusters and write a summary memory for each."""
+        """Find semantic clusters and write a summary memory for each.
+
+        Anti-laundering (MemLineage pattern): injection-flagged members are
+        excluded from synthesis input, and the derived insight inherits the
+        MINIMUM trust of its sources (capped at the daemon base). Without
+        this, a quarantined 0.3 memory could be LLM-rephrased into a clean
+        0.5 insight — trust laundering through the dreaming loop.
+        """
         rows = await self.db.fetchall(
             """
-            SELECT id, content, memory_type, embedding
+            SELECT id, content, memory_type, embedding, trust_score
             FROM memory_entry
             WHERE valid_until IS NULL
               AND embedding IS NOT NULL
               AND metadata->>'insight_type' IS DISTINCT FROM 'cluster'
+              AND metadata->>'injection_flagged' IS DISTINCT FROM 'true'
             ORDER BY created_at DESC
             LIMIT 2000
             """
@@ -79,10 +91,11 @@ class InsightsDaemon:
                     embedding_vec = embedding_vec
                 neighbors = await self.db.fetchall(
                     """
-                    SELECT id, content
+                    SELECT id, content, trust_score
                     FROM memory_entry
                     WHERE valid_until IS NULL
                       AND id != $1
+                      AND metadata->>'injection_flagged' IS DISTINCT FROM 'true'
                       AND (embedding <=> $2::vector) < $3
                     ORDER BY embedding <=> $2::vector
                     LIMIT 50
@@ -109,16 +122,29 @@ class InsightsDaemon:
             if summary.startswith("Insight:"):
                 synthesis_used = True
 
+            # Derived trust = min of the sources, capped at the daemon base.
+            # A synthesis is never more trustworthy than its weakest input.
+            member_trusts = [
+                float(t)
+                for t in (
+                    [row.get("trust_score")] + [n.get("trust_score") for n in neighbors[:9]]
+                )
+                if t is not None
+            ]
+            derived_trust = min([self.CLUSTER_BASE_TRUST, *member_trusts])
+
             try:
                 await self.memory_tools.capture_memory(
                     content=summary,
                     memory_type="semantic",
-                    trust_score=0.5,
+                    trust_score=derived_trust,
                     actor=self.actor,
                     source_agent=self.actor,
                     metadata={
                         "insight_type": "cluster",
                         "cluster_members": member_ids[:20],
+                        "derived_from": member_ids[:20],
+                        "source_trust_min": derived_trust,
                         "daemon": "insights",
                         "generated_at": datetime.now(UTC).isoformat(),
                     },

@@ -158,6 +158,28 @@ At retrieval time, flagged content is wrapped in a `<jeli:quarantine>` envelope
 content). The wrapper is applied at read time and is never stored, so it cannot
 itself be chained or tampered.
 
+Three further retrieval/derivation defenses (added after the 2026 research
+wave — MemLineage, MemoryGraft, TMA-NM):
+
+- **Anti-laundering trust inheritance.** Consolidation is a laundering
+  channel: a quarantined 0.3 memory rephrased by the insights daemon's LLM
+  would otherwise re-enter the store as a clean derived insight. The cluster
+  synthesizer now excludes injection-flagged memories from its input
+  entirely, and a derived insight's trust is `min(sources)` capped at the
+  daemon base (0.5) — derived content never outranks its weakest source.
+  Lineage is recorded in `derived_from` metadata.
+- **Unverified-procedure wrapping.** Agents imitate retrieved *procedures*
+  far more readily than they believe retrieved facts (the MemoryGraft attack
+  class). Procedural memories below effective trust 0.7 are wrapped at read
+  time in `<jeli:unverified-procedure>` — a structural do-not-imitate signal.
+  Flagged procedures keep the stricter quarantine wrap.
+- **Safety-aware re-ranking.** MemoryGraft-class attacks win by engineering
+  *similarity*; pure relevance ordering is blind to provenance. With
+  `rerank=true`, a deterministic post-pass multiplies relevance by a
+  trust-derived weight and slashes flagged entries, so a poisoned entry with
+  perfect embedding similarity still ranks below a moderately relevant
+  trusted memory.
+
 **Known gap (GitHub [issue #33](https://github.com/LegionForge/jeli/issues/33)):**
 the Layer-1 regex is keyword-oriented; homoglyph and zero-width evasion is now
 folded away by the normalization pre-pass, but a sufficiently reworded
