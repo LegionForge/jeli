@@ -77,7 +77,8 @@ def test_file_provider_reads_and_strips(tmp_path):
 def test_file_provider_warns_on_loose_perms(tmp_path, caplog):
     keyfile = tmp_path / "chain_key"
     keyfile.write_text("k")
-    os.chmod(keyfile, 0o644)
+    # group-readable (not world) is enough to trip the warning path
+    os.chmod(keyfile, 0o640)
     s = _settings(key_provider="file", key_ref=str(keyfile))
     with caplog.at_level("WARNING"):
         resolve_chain_key(s)
