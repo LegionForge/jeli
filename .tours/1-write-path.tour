@@ -1,13 +1,13 @@
 {
   "$schema": "https://aka.ms/codetour-schema",
-  "title": "1 — The Write Path (capture_memory)",
+  "title": "1: The Write Path (capture_memory)",
   "description": "Follow one memory from an agent's MCP call to a hash-chained row in Postgres. Every step is a gate: a failure anywhere means nothing lands in the chain.",
   "steps": [
     {
       "file": "src/jeli_scoped_mcp/server/mcp_server.py",
       "pattern": "async def dispatch\\(self, name: str, arguments: dict\\)",
       "title": "The only door",
-      "description": "Agents never touch the database. Every operation arrives here as an MCP tool call — `capture_memory`, `search_memory`, `audit_trail`, `summarize_session`, `search_by_entity`, `get_entity_graph`. No shell, no file access, no raw SQL surface. This is the blast-radius boundary the whole project started from."
+      "description": "Agents never touch the database. Every operation arrives here as an MCP tool call: `capture_memory`, `search_memory`, `audit_trail`, `summarize_session`, `search_by_entity`, `get_entity_graph`. No shell, no file access, no raw SQL surface. This is the blast-radius boundary the whole project started from."
     },
     {
       "file": "src/jeli_scoped_mcp/server/mcp_server.py",
@@ -19,7 +19,7 @@
       "file": "src/jeli_scoped_mcp/server/mcp_server.py",
       "pattern": "def _infer_content_class\\(",
       "title": "External content is stigmatized",
-      "description": "If an agent writes \"general\" content that looks web-sourced (URLs, quoted page text), the server re-classes it to `external-untrusted` regardless of what the agent claimed. Content class steers quarantine wrapping at read time and constitutional trust floors — so it cannot be left to the writer's honesty."
+      "description": "If an agent writes \"general\" content that looks web-sourced (URLs, quoted page text), the server re-classes it to `external-untrusted` regardless of what the agent claimed. Content class steers quarantine wrapping at read time and constitutional trust floors, so it cannot be left to the writer's honesty."
     },
     {
       "file": "src/jeli_scoped_mcp/tools/memory_tools.py",
@@ -36,50 +36,50 @@
     {
       "file": "src/jeli_scoped_mcp/security.py",
       "pattern": "def sanitize_content\\(",
-      "title": "Flag and cap — never block",
-      "description": "Injection-flagged content is trust-capped at 0.3, not rejected. Blocking would teach an adaptive attacker exactly which phrasings evade; capping means the payload lands with no authority and full audit visibility. Exception: an authoritative source (trust ≥ 0.9) writing a `security-doc` *about* attacks keeps its trust, with the override reason recorded — the store can hold security documentation without self-poisoning."
+      "title": "Flag and cap, never block",
+      "description": "Injection-flagged content is trust-capped at 0.3, not rejected. Blocking would teach an adaptive attacker exactly which phrasings evade; capping means the payload lands with no authority and full audit visibility. Exception: an authoritative source (trust ≥ 0.9) writing a `security-doc` *about* attacks keeps its trust, with the override reason recorded, so the store can hold security documentation without self-poisoning."
     },
     {
       "file": "src/jeli_scoped_mcp/tools/memory_tools.py",
       "pattern": "# Constitutional Write Gate — inviolable by agents",
       "title": "Constitutional WriteGate",
-      "description": "User-signed rules get the last word before hashing: a rule can deny the write outright or cap its trust. Running **before** the record is hashed means a blocked write leaves no chain entry to clean up — the constitution is enforced by position in the pipeline, not by promises."
+      "description": "User-signed rules get the last word before hashing: a rule can deny the write outright or cap its trust. Running **before** the record is hashed means a blocked write leaves no chain entry to clean up; the constitution is enforced by position in the pipeline, not by promises."
     },
     {
       "file": "src/jeli_scoped_mcp/tools/memory_tools.py",
       "pattern": "if embedding.dimensions != INDEX_DIMENSIONS:",
       "title": "The 1024 index standard",
-      "description": "Every vector must be 1024-dim — arctic-embed2 native, qwen3-embedding native, OpenAI truncatable via matryoshka. Enforcing it at capture means switching embedding models is a re-embedding job, never a schema migration, and dimension-confusion attacks are refused at the door."
+      "description": "Every vector must be 1024-dim: arctic-embed2 native, qwen3-embedding native, OpenAI truncatable via matryoshka. Enforcing it at capture means switching embedding models is a re-embedding job, never a schema migration, and dimension-confusion attacks are refused at the door."
     },
     {
       "file": "src/jeli_scoped_mcp/tools/memory_tools.py",
       "pattern": "async with self.db.locked_transaction\\(CHAIN_WRITE_LOCK\\)",
-      "title": "The chain append — under an advisory lock",
-      "description": "The `prev_hash` read and the INSERT are serialized by a Postgres advisory lock. Without it, two concurrent writers read the same `prev_hash` and fork the chain — making *legitimate* data fail verification. (CI's live-Postgres job caught this as a real race.) The record hash is `HMAC-SHA256(chain_key, canonical(record) + prev_hash)`."
+      "title": "The chain append, under an advisory lock",
+      "description": "The `prev_hash` read and the INSERT are serialized by a Postgres advisory lock. Without it, two concurrent writers read the same `prev_hash` and fork the chain, making *legitimate* data fail verification. (CI's live-Postgres job caught this as a real race.) The record hash is `HMAC-SHA256(chain_key, canonical(record) + prev_hash)`."
     },
     {
       "file": "src/jeli_scoped_mcp/core/hash_chain.py",
       "pattern": "def compute_record_hash\\(",
       "title": "Why HMAC and not plain SHA-256",
-      "description": "A plain hash chain only proves *order*; anyone who can write rows can recompute hashes. The HMAC key never lives in the database, so an attacker with full DB access still cannot forge a record that verifies. Each record also carries a `key_id`, so rotating the chain key never invalidates history — old records verify under their own key."
+      "description": "A plain hash chain only proves *order*; anyone who can write rows can recompute hashes. The HMAC key never lives in the database, so an attacker with full DB access still cannot forge a record that verifies. Each record also carries a `key_id`, so rotating the chain key never invalidates history; old records verify under their own key."
     },
     {
       "file": "src/jeli_scoped_mcp/tools/memory_tools.py",
       "pattern": "INSERT INTO memory_audit_log \\(memory_id, action, actor, source_session, details\\)",
       "title": "Audit row, same transaction",
-      "description": "Every write commits an audit row atomically with the memory itself: actor, session, trust as stored, whether injection was flagged, and any trust-override reason. `audit_trail(memory_id)` replays this history to any agent — provenance is a first-class read surface."
+      "description": "Every write commits an audit row atomically with the memory itself: actor, session, trust as stored, whether injection was flagged, and any trust-override reason. `audit_trail(memory_id)` replays this history to any agent; provenance is a first-class read surface."
     },
     {
       "file": "src/jeli_scoped_mcp/tools/memory_tools.py",
       "pattern": "# Entity extraction — best-effort, never fails the write\\.",
-      "title": "Entity graph — best effort",
+      "title": "Entity graph: best effort",
       "description": "After commit, entities (people, projects, orgs, technologies) and their relations are extracted and linked. This powers `search_by_entity` and `get_entity_graph`. It runs outside the critical path on purpose: a graph failure must never lose a memory."
     },
     {
       "file": "src/jeli_scoped_mcp/inbox/worker.py",
       "pattern": "class InboxWorker:",
       "title": "Optional staging: the Bouncer",
-      "description": "In bouncer mode, writes first land in `memory_inbox`, get scored and deduped by the `IngestionClassifier`, and only approved rows are promoted — through this same capture_memory gauntlet. `FOR UPDATE SKIP LOCKED` claiming makes it safe to run N workers in parallel."
+      "description": "In bouncer mode, writes first land in `memory_inbox`, get scored and deduped by the `IngestionClassifier`, and only approved rows are promoted, through this same capture_memory gauntlet. `FOR UPDATE SKIP LOCKED` claiming makes it safe to run N workers in parallel."
     }
   ]
 }

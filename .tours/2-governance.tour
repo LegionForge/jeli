@@ -1,6 +1,6 @@
 {
   "$schema": "https://aka.ms/codetour-schema",
-  "title": "2 — Governance (Constitutional & Judicial)",
+  "title": "2: Governance (Constitutional & Judicial)",
   "description": "The separation-of-powers layer: user-signed constitutional rules that no branch can override, and a judicial branch that turns conflict resolution into case law.",
   "steps": [
     {
@@ -13,31 +13,31 @@
       "file": "src/jeli_scoped_mcp/constitutional/manager.py",
       "pattern": "async def revoke_rule\\(",
       "title": "Retired, never deleted",
-      "description": "There is no UPDATE and no DELETE on rules — revocation sets `revoked_at` and keeps the row. The `jeli_app` DB role has no DELETE grant on this table at all (migration 013), so even a compromised server process cannot erase constitutional history."
+      "description": "There is no UPDATE and no DELETE on rules; revocation sets `revoked_at` and keeps the row. The `jeli_app` DB role has no DELETE grant on this table at all (migration 013), so even a compromised server process cannot erase constitutional history."
     },
     {
       "file": "src/jeli_scoped_mcp/constitutional/manager.py",
       "pattern": "async def load_all_rules\\(",
       "title": "Verification covers revoked rules",
-      "description": "`jeli constitutional verify` re-signs *every* rule ever created, revoked included. A revoked rule is retired history, not deleted history — if tampering with it went undetected, an attacker could rewrite what the constitution used to say. Active-rule loads are TTL-cached; verification deliberately is not."
+      "description": "`jeli constitutional verify` re-signs *every* rule ever created, revoked included. A revoked rule is retired history, not deleted history: if tampering with it went undetected, an attacker could rewrite what the constitution used to say. Active-rule loads are TTL-cached; verification deliberately is not."
     },
     {
       "file": "src/jeli_scoped_mcp/constitutional/gate.py",
       "pattern": "class WriteGate:",
-      "title": "WriteGate — the constitution on the write path",
+      "title": "WriteGate: the constitution on the write path",
       "description": "Checks each active rule against the incoming write: `deny_memory_type_for_agents`, `max_trust_for_content_class`, and friends. Can block outright or cap trust. It runs inside capture_memory *before* hashing (see Tour 1), so the constitution is structurally upstream of the ledger."
     },
     {
       "file": "src/jeli_scoped_mcp/constitutional/gate.py",
       "pattern": "class ReadGate:",
-      "title": "ReadGate — the constitution on the read path",
-      "description": "Filters every search result set per-actor: exclude memory types or content classes, enforce trust floors, cap result counts, hide tagged memories. Applies to *every* read surface — a v0.2.0 audit found `search_by_entity` bypassing it entirely (fixed in f52b381). Unknown rule types fail closed: a rule the gate doesn't understand filters everything rather than nothing."
+      "title": "ReadGate: the constitution on the read path",
+      "description": "Filters every search result set per-actor: exclude memory types or content classes, enforce trust floors, cap result counts, hide tagged memories. Applies to *every* read surface; a v0.2.0 audit found `search_by_entity` bypassing it entirely (fixed in f52b381). Unknown rule types fail closed: a rule the gate doesn't understand filters everything rather than nothing."
     },
     {
       "file": "src/jeli_scoped_mcp/cli.py",
       "pattern": "async def _run_constitutional\\(",
-      "title": "User-tier only — deliberately not MCP",
-      "description": "Constitutional add/revoke/verify live in the CLI, not the MCP server. An agent cannot amend the constitution because the amendment surface is physically absent from its tool list. Same for redaction and state changes — the user tier and the agent tier are different processes with different DB roles."
+      "title": "User-tier only, deliberately not MCP",
+      "description": "Constitutional add/revoke/verify live in the CLI, not the MCP server. An agent cannot amend the constitution because the amendment surface is physically absent from its tool list. Same for redaction and state changes: the user tier and the agent tier are different processes with different DB roles."
     },
     {
       "file": "src/jeli_scoped_mcp/daemons/conflict_resolver.py",
@@ -49,25 +49,25 @@
       "file": "src/jeli_scoped_mcp/daemons/conflict_resolver.py",
       "pattern": "async def _resolve_high\\(",
       "title": "Deterministic arbitration + case law",
-      "description": "HIGH-severity contradictions resolve by a deterministic rule: higher trust wins; newer wins on a tie. The loser is *invalidated* via a chained state event — never deleted (see Tour 3). Before deliberating, the daemon checks precedent: a settled pattern at confidence ≥ 0.7 is applied directly and reinforced."
+      "description": "HIGH-severity contradictions resolve by a deterministic rule: higher trust wins; newer wins on a tie. The loser is *invalidated* via a chained state event, never deleted (see Tour 3). Before deliberating, the daemon checks precedent: a settled pattern at confidence ≥ 0.7 is applied directly and reinforced."
     },
     {
       "file": "src/jeli_scoped_mcp/judicial/precedent.py",
       "pattern": "def pattern_hash\\(contradiction_type: str, type_a: str, type_b: str\\)",
       "title": "Precedent is keyed by pattern, not by pair",
-      "description": "Case law generalizes: a precedent covers a *class* of conflict — the contradiction type plus the two memory types, symmetric (preference-vs-identity ≡ identity-vs-preference). One ruling about one pair of memories becomes reusable law for every future conflict of the same shape."
+      "description": "Case law generalizes: a precedent covers a *class* of conflict: the contradiction type plus the two memory types, symmetric (preference-vs-identity ≡ identity-vs-preference). One ruling about one pair of memories becomes reusable law for every future conflict of the same shape."
     },
     {
       "file": "src/jeli_scoped_mcp/judicial/precedent.py",
       "pattern": "async def record\\(",
       "title": "Agreement reinforces; dissent erodes; sustained dissent overturns",
-      "description": "The upsert encodes real case-law dynamics. A repeat deliberation that **agrees** grows confidence (+0.1, ceiling 1.0). One that **disagrees** keeps the standing resolution and erodes confidence one step — a single dissent never rewrites settled law. Only when erosion drops below `OVERTURN_FLOOR` (0.3) does the new resolution take over, at base confidence, with the applied count restarted. (Earlier versions let any dissent silently overwrite the precedent *and* gain confidence — the live-Postgres integration tests now pin the correct semantics.)"
+      "description": "The upsert encodes real case-law dynamics. A repeat deliberation that **agrees** grows confidence (+0.1, ceiling 1.0). One that **disagrees** keeps the standing resolution and erodes confidence one step; a single dissent never rewrites settled law. Only when erosion drops below `OVERTURN_FLOOR` (0.3) does the new resolution take over, at base confidence, with the applied count restarted. (Earlier versions let any dissent silently overwrite the precedent *and* gain confidence; the live-Postgres integration tests now pin the correct semantics.)"
     },
     {
       "file": "src/jeli_scoped_mcp/judicial/escalation.py",
       "pattern": "class HumanEscalationQueue:",
       "title": "The user is the appellate court",
-      "description": "A memory that keeps landing in conflicts escalates here instead of being re-arbitrated forever. `jeli judicial pending` lists open escalations; `jeli judicial resolve` records the human ruling. Unresolvable questions go *up* to the user — never silently decided by an agent."
+      "description": "A memory that keeps landing in conflicts escalates here instead of being re-arbitrated forever. `jeli judicial pending` lists open escalations; `jeli judicial resolve` records the human ruling. Unresolvable questions go *up* to the user, never silently decided by an agent."
     }
   ]
 }

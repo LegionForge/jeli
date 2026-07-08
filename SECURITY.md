@@ -1,6 +1,6 @@
 # Security Policy
 
-Jeli is a security and governance layer for personal memory systems — its entire
+Jeli is a security and governance layer for personal memory systems; its entire
 reason to exist is to make memory trustworthy, verifiable, and hard to poison.
 This document describes the threat model it is built against, the mechanisms that
 defend the store, their known limits, and how to report a vulnerability.
@@ -17,7 +17,7 @@ As of 2026, memory-poisoning attacks against AI agents are documented and active
 | Attack | What it does | How Jeli responds |
 |---|---|---|
 | **MINJA** (arXiv 2025) | Adversarial content is written into long-term memory so it hijacks the agent's behavior at recall time. 95%+ injection success, 70%+ attack success under realistic conditions. | The injected record is captured with a **low, foreign trust score** and, if it carries injection markers, is **flagged and trust-capped at 0.3** at write time. Retrieval wraps flagged content in a quarantine envelope so it is never silently fed back to the agent as fact. |
-| **Microsoft "AI Recommendation Poisoning"** (Feb 2026) | At-scale manipulation of what a memory system recommends, by seeding it with attacker-favorable "facts". | **Agent-declared trust is clamped** to the agent ceiling (0.6) at the MCP boundary — an agent cannot assert user-grade (1.0) authority for content it ingested. The Constitutional **WriteGate** can additionally cap or deny whole content-classes. |
+| **Microsoft "AI Recommendation Poisoning"** (Feb 2026) | At-scale manipulation of what a memory system recommends, by seeding it with attacker-favorable "facts". | **Agent-declared trust is clamped** to the agent ceiling (0.6) at the MCP boundary; an agent cannot assert user-grade (1.0) authority for content it ingested. The Constitutional **WriteGate** can additionally cap or deny whole content-classes. |
 | **Palo Alto Unit 42 IJPI** (indirect prompt injection) | A document or web page carries hidden instructions that poison the agent's memory persistently when ingested. | Content sourced externally is **server-side stigmatised** to `external-untrusted` regardless of the class the agent claimed, then screened by the **layered injection defense** (regex + optional LLM second pass). Anything that lands is **hash-chained**, so a later covert edit breaks verification. |
 
 The unifying property: an injected memory cannot enter the store as trusted,
@@ -34,7 +34,7 @@ section below.
 ## 2. Cryptographic integrity
 
 Every memory write is appended to a per-entity **HMAC-SHA256 hash chain**. There
-is no in-place UPDATE and no DELETE of content on the write path — corrections
+is no in-place UPDATE and no DELETE of content on the write path; corrections
 and redactions are themselves appended events.
 
 - **`record_hash` = HMAC-SHA256(chain_key, canonical(content + metadata + prev_hash + key_id))**
@@ -52,7 +52,7 @@ the first out-of-sync record (exit 0 valid / 1 broken / 2 misconfigured;
 chain, cache consistency, and trust/queue stats).
 
 **What this catches:** any silent overwrite, deletion, back-/post-dating, or
-tampering of a stored record — including an attacker with DB write access but
+tampering of a stored record, including an attacker with DB write access but
 without the chain key. **What it does not catch:** a write that is malicious but
 well-formed and correctly signed by a holder of the chain key. Guard the chain
 key like a root credential.
@@ -77,7 +77,7 @@ Every write carries a trust score reflecting the authority of its source:
   content-class.
 - **Read-time decay:** retrieval reports an `effective_trust = stored × f(age)`.
   Memories below 0.9 decay (≈1%/day); user-confirmed facts (≥0.9) do not decay.
-  Decay is computed at read time — the stored score is never mutated, so the
+  Decay is computed at read time; the stored score is never mutated, so the
   chain stays intact. `jeli decay-report` surfaces memories whose effective
   trust has drifted far from their stored score.
 
@@ -86,11 +86,11 @@ Every write carries a trust score reflecting the authority of its source:
 ## 4. Constitutional layer
 
 The Constitutional layer is the inviolable floor: **user-only**, hash-chained,
-and enforced by architecture. Agents can never create, edit, or revoke a rule —
+and enforced by architecture. Agents can never create, edit, or revoke a rule:
 the CLI (`jeli constitutional add/list/revoke/verify`) is a user-tier surface,
 not an MCP tool. Rules are retired, never deleted; `constitutional verify`
-recomputes each rule's HMAC — revoked rules included, since retired history
-must stay tamper-evident too — and reports any tampering.
+recomputes each rule's HMAC (revoked rules included, since retired history
+must stay tamper-evident too) and reports any tampering.
 
 Two gates enforce rules:
 
@@ -134,19 +134,19 @@ before running an untrusted import.
 
 Injection screening runs on the capture path in two layers:
 
-- **Layer 1 — regex pattern matching (always on).** Detects jailbreak prefixes,
+- **Layer 1, regex pattern matching (always on).** Detects jailbreak prefixes,
   override attempts ("ignore previous instructions"), and instruction-boundary
   markers (`<system>…</system>`). Before matching, content passes through a
   **detection-only unicode normalization** (`normalize_for_detection`): zero-width
   characters are stripped, fullwidth/compatibility forms are NFKC-folded, and
-  Cyrillic/Greek confusables are mapped to Latin — so homoglyph and invisible-
+  Cyrillic/Greek confusables are mapped to Latin, so homoglyph and invisible-
   character evasion of the keyword patterns is caught. The stored memory content
   is never altered by this fold. Content that matches is flagged and
   trust-capped at `FLAGGED_TRUST_CEILING` (0.3). An authoritative source
-  (trust ≥ 0.9) whose content is legitimately *about* injection — e.g. a
-  security note — is preserved with a recorded override reason instead of being
+  (trust ≥ 0.9) whose content is legitimately *about* injection (e.g. a
+  security note) is preserved with a recorded override reason instead of being
   capped, so the store can hold security documentation without self-poisoning.
-- **Layer 2 — LLM second-pass classifier (optional).** An async second pass that
+- **Layer 2, LLM second-pass classifier (optional).** An async second pass that
   catches natural-language evasions the regex misses. It is **opt-in** (the
   `[llm]` extra), **fails open** on any error including a missing package (a
   classifier outage never blocks a legitimate write), and is **skipped for
@@ -159,19 +159,19 @@ content). The wrapper is applied at read time and is never stored, so it cannot
 itself be chained or tampered.
 
 Three further retrieval/derivation defenses (added after the 2026 research
-wave — MemLineage, MemoryGraft, TMA-NM):
+wave: MemLineage, MemoryGraft, TMA-NM):
 
 - **Anti-laundering trust inheritance.** Consolidation is a laundering
   channel: a quarantined 0.3 memory rephrased by the insights daemon's LLM
   would otherwise re-enter the store as a clean derived insight. The cluster
   synthesizer now excludes injection-flagged memories from its input
   entirely, and a derived insight's trust is `min(sources)` capped at the
-  daemon base (0.5) — derived content never outranks its weakest source.
+  daemon base (0.5); derived content never outranks its weakest source.
   Lineage is recorded in `derived_from` metadata.
 - **Unverified-procedure wrapping.** Agents imitate retrieved *procedures*
   far more readily than they believe retrieved facts (the MemoryGraft attack
   class). Procedural memories below effective trust 0.7 are wrapped at read
-  time in `<jeli:unverified-procedure>` — a structural do-not-imitate signal.
+  time in `<jeli:unverified-procedure>`: a structural do-not-imitate signal.
   Flagged procedures keep the stricter quarantine wrap.
 - **Safety-aware re-ranking.** MemoryGraft-class attacks win by engineering
   *similarity*; pure relevance ordering is blind to provenance. With
@@ -194,13 +194,13 @@ because it adds a dependency and a per-write LLM call.
 ## 6. API key security
 
 - **Comparison:** the server auth key is checked with `hmac.compare_digest()`,
-  never `==` / `!=` — constant-time, to deny a timing oracle.
-- **Generation:** `secrets.token_urlsafe(32)` — 256 bits of entropy, URL-safe.
+  never `==` / `!=`: constant-time, to deny a timing oracle.
+- **Generation:** `secrets.token_urlsafe(32)`: 256 bits of entropy, URL-safe.
 - **Transmission:** the key travels in the `X-API-Key` HTTP header, never a query
   parameter (query strings leak into logs and referrers).
 - **Storage:** config files holding the API key / chain key should be `chmod 0600`;
   the server warns at startup if permissions are too open.
-- **Pre-TLS LAN cleartext** is a known deployment gap — mitigate with
+- **Pre-TLS LAN cleartext** is a known deployment gap; mitigate with
   network-level controls (VLAN, firewall, or an SSH tunnel) until TLS is in front
   of the server.
 
@@ -222,6 +222,6 @@ Please include:
 
 You should receive an acknowledgement within **72 hours**. Reports that reduce to
 a limitation already documented in [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md)
-are still welcome — especially with a novel exploitation path.
+are still welcome, especially with a novel exploitation path.
 
 **Supported version:** the latest release on `main`.
