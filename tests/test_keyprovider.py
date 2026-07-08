@@ -34,6 +34,7 @@ def test_registry_lists_known_providers():
         "file",
         "keychain",
         "1password",
+        "openbao",
         "passphrase",
     }
 
@@ -175,3 +176,50 @@ def test_onepassword_provider_rejects_bad_ref():
     s = _settings(key_provider="1password", key_ref="/not/an/op/ref")
     with pytest.raises(KeyProviderError, match="op://"):
         resolve_chain_key(s)
+
+
+# ── openbao (mocked) ─────────────────────────────────────────────────────────
+
+
+def test_openbao_provider_reads_field():
+    from subprocess import CompletedProcess
+
+    s = _settings(key_provider="openbao", key_ref="secret/jeli-chain-key#value")
+    with patch(
+        "jeli_scoped_mcp.keyprovider.providers.subprocess.run",
+        return_value=CompletedProcess(args=[], returncode=0, stdout="bao-key\n", stderr=""),
+    ) as run:
+        assert resolve_chain_key(s) == "bao-key"
+    argv = run.call_args.args[0]
+    assert argv[:4] == ["bao", "kv", "get", "-field"]
+    assert argv[4] == "value" and argv[5] == "secret/jeli-chain-key"
+
+
+def test_openbao_provider_defaults_field_to_value():
+    from subprocess import CompletedProcess
+
+    s = _settings(key_provider="openbao", key_ref="secret/jeli-chain-key")
+    with patch(
+        "jeli_scoped_mcp.keyprovider.providers.subprocess.run",
+        return_value=CompletedProcess(args=[], returncode=0, stdout="k\n", stderr=""),
+    ) as run:
+        resolve_chain_key(s)
+    assert run.call_args.args[0][4] == "value"
+
+
+def test_openbao_provider_missing_ref_raises():
+    s = _settings(key_provider="openbao", key_ref="")
+    with pytest.raises(KeyProviderError, match="needs SCOPED_MCP_KEY_REF"):
+        resolve_chain_key(s)
+
+
+def test_openbao_provider_cli_failure_raises():
+    import subprocess
+
+    s = _settings(key_provider="openbao", key_ref="secret/jeli#value")
+    with patch(
+        "jeli_scoped_mcp.keyprovider.providers.subprocess.run",
+        side_effect=subprocess.CalledProcessError(2, "bao"),
+    ):
+        with pytest.raises(KeyProviderError, match="OpenBAO read failed"):
+            resolve_chain_key(s)

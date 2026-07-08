@@ -134,6 +134,49 @@ class OnePasswordKeyProvider(KeyProvider):
 
 
 @register
+class OpenBAOKeyProvider(KeyProvider):
+    """Read the key from an OpenBAO (or Vault) KV secret via the ``bao`` CLI.
+
+    This is the key-*material* use of OpenBAO: the vault stores and access-
+    controls the chain key, and Jeli reads it at startup. It does not keep the
+    key inside the vault (that is the transit signing-oracle tier, not yet
+    built), but it centralises custody, audit, and rotation.
+
+    ``SCOPED_MCP_KEY_REF`` is ``<kv-path>#<field>`` (field defaults to
+    ``value``), e.g. ``secret/jeli-chain-key#value``. The CLI uses the
+    ambient ``BAO_ADDR`` / ``BAO_TOKEN`` environment (OpenBAO must be unsealed
+    and the caller authenticated). ``bao`` is a drop-in for ``vault``; set
+    ``SCOPED_MCP_KEY_REF`` and the CLI name is fixed to ``bao``.
+    """
+
+    name = "openbao"
+
+    def resolve(self, settings: Settings, *, prompt: bool = True) -> str:
+        ref = settings.key_ref
+        if not ref:
+            raise KeyProviderError(
+                "key provider 'openbao' needs SCOPED_MCP_KEY_REF = <kv-path>#<field> "
+                "(e.g. secret/jeli-chain-key#value)"
+            )
+        path, _, field = ref.partition("#")
+        field = field or "value"
+        try:
+            out = subprocess.run(  # nosec B603 B607 — fixed argv, no shell
+                ["bao", "kv", "get", "-field", field, path],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=True,
+            )
+            return out.stdout.strip()
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise KeyProviderError(
+                "OpenBAO read failed (is 'bao' installed, BAO_ADDR/BAO_TOKEN set, "
+                f"and the vault unsealed?): {exc}"
+            ) from exc
+
+
+@register
 class PassphraseKeyProvider(KeyProvider):
     """Derive the chain key from a user passphrase via scrypt (PGP-style).
 

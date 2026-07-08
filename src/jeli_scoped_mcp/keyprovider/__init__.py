@@ -13,6 +13,7 @@ from .providers import (
     FileKeyProvider,
     KeychainKeyProvider,
     OnePasswordKeyProvider,
+    OpenBAOKeyProvider,
     PassphraseKeyProvider,
     derive_key_from_passphrase,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "FileKeyProvider",
     "KeychainKeyProvider",
     "OnePasswordKeyProvider",
+    "OpenBAOKeyProvider",
     "PassphraseKeyProvider",
     "derive_key_from_passphrase",
 ]

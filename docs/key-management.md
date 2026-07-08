@@ -26,7 +26,17 @@ There is a fundamental split, and it drives the whole design:
 | `file` | path | Read from a dedicated file, e.g. `~/.jeli-secrets/chain_key`. Warns if the file is group/world readable. |
 | `keychain` | service name (default `jeli-chain-key`) | OS keychain via the `keyring` extra (`pip install -e ".[keychain]"`), or the macOS `security` CLI as a fallback. Account is the chain key id. |
 | `1password` | `op://Vault/Item/field` | Reads via the `op` CLI (must be installed and signed in). |
+| `openbao` | `<kv-path>#<field>` (field default `value`) | Reads a KV secret via the `bao` CLI. Uses ambient `BAO_ADDR` / `BAO_TOKEN`; the vault must be unsealed and the caller authenticated. This is OpenBAO as a key *store*, not the transit signing oracle below. |
 | `passphrase` | salt (hex) | Derives the key from an interactively-entered passphrase via scrypt (n=2^15). Reproducible given the same passphrase and salt. Non-interactive use reads `SCOPED_MCP_PASSPHRASE`. |
+
+### Two ways to use OpenBAO
+
+- **KV store (`openbao`, above): available now.** OpenBAO holds, access-controls,
+  audits, and rotates the chain key; Jeli fetches it at startup. The key still
+  lands in Jeli's process memory, but custody moves off the host into the vault.
+- **Transit signing oracle: planned (see below).** The key never leaves the
+  vault; Jeli asks OpenBAO to compute the MAC. Strictly stronger, and the
+  recorded near-term target, but it needs the async `Signer` refactor.
 
 Generate a salt for the passphrase provider:
 
