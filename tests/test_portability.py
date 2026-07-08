@@ -293,12 +293,38 @@ class TestMemoryImporter:
         assert meta["imported_from"]["import_actor"] == "jeli-import"
 
     @pytest.mark.asyncio
-    async def test_import_preserves_trust_score(self):
+    async def test_import_clamps_trust_to_ceiling_by_default(self):
+        """GH #37: an archive's trust is clamped to the import ceiling (0.3)."""
         importer, mock_tools = self._make_importer()
         stream = _make_export_stream([_record_dict(trust_score=0.9)])
         await importer.import_stream(stream)
         call_kwargs = mock_tools.capture_memory.call_args.kwargs
-        assert call_kwargs["trust_score"] == 0.9
+        assert call_kwargs["trust_score"] == 0.3
+
+    async def test_import_trust_ceiling_override_preserves_up_to_ceiling(self):
+        """A known-good local restore can raise the ceiling explicitly."""
+        importer, mock_tools = self._make_importer()
+        importer.trust_ceiling = 1.0
+        stream = _make_export_stream([_record_dict(trust_score=0.9)])
+        await importer.import_stream(stream)
+        assert mock_tools.capture_memory.call_args.kwargs["trust_score"] == 0.9
+
+    async def test_import_strips_server_owned_metadata(self):
+        """GH #37: a crafted archive can't smuggle server-owned provenance keys."""
+        importer, mock_tools = self._make_importer()
+        rec = _record_dict(trust_score=0.3)
+        rec["metadata"] = {
+            "injection_flagged": False,
+            "insight_type": "cluster",
+            "trust_override_reason": "spoof",
+            "project": "keep",
+        }
+        await importer.import_stream(_make_export_stream([rec]))
+        meta = mock_tools.capture_memory.call_args.kwargs["metadata"]
+        assert "injection_flagged" not in meta
+        assert "insight_type" not in meta
+        assert "trust_override_reason" not in meta
+        assert meta["project"] == "keep"
 
     @pytest.mark.asyncio
     async def test_import_dry_run_does_not_write(self):

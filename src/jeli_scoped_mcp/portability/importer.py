@@ -2,7 +2,9 @@
 
 Import semantics:
   - Each record is treated as a NEW capture (new IDs, new chain position).
-  - Original trust_score, memory_type, content_class, and metadata are preserved.
+  - memory_type and content_class are preserved; trust is clamped to an import
+    ceiling (default 0.3) because an archive is untrusted input, and
+    server-owned provenance/security metadata keys are stripped (GH #37).
   - Embeddings are recomputed at destination using the local embedding model.
   - Redacted records in the export are skipped (content is [REDACTED]).
   - Records whose content_hash doesn't match the content string are rejected
@@ -24,12 +26,20 @@ from typing import IO
 
 from ..database.pool import AsyncPostgresPool
 from ..embedding.provider import EmbeddingProvider
-from ..tools.memory_tools import MemoryTools
+from ..tools.memory_tools import SERVER_OWNED_METADATA_KEYS, MemoryTools
 
 logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = "1.0"
 IMPORT_ACTOR = "jeli-import"
+
+# A portable archive is untrusted input: its content_hash proves the record
+# was not corrupted in transit, NOT that it is trustworthy (anyone can compute
+# a SHA-256). So imported trust is clamped to this ceiling by default (GH #37),
+# preventing a crafted archive from laundering attacker content to user-tier
+# 1.0 and weaponizing the conflict resolver against genuine memories. A user
+# doing a known-good local restore can raise the ceiling explicitly.
+DEFAULT_IMPORT_TRUST_CEILING = 0.3
 
 
 class ImportError(Exception):
@@ -46,12 +56,14 @@ class MemoryImporter:
         chain_key: str,
         key_id: str = "k1",
         dry_run: bool = False,
+        trust_ceiling: float = DEFAULT_IMPORT_TRUST_CEILING,
     ):
         self.db = db
         self.embedder = embedder
         self.chain_key = chain_key
         self.key_id = key_id
         self.dry_run = dry_run
+        self.trust_ceiling = trust_ceiling
         self._tools = MemoryTools(
             db=db, embedder=embedder, chain_key=chain_key, key_id=key_id
         )
@@ -138,9 +150,17 @@ class MemoryImporter:
     ) -> str:
         content = record.get("content", "")
         memory_type = record.get("memory_type", "episodic")
-        trust_score = float(record.get("trust_score", 0.5))
+        # Clamp untrusted archive trust to the import ceiling (GH #37).
+        trust_score = min(float(record.get("trust_score", 0.5)), self.trust_ceiling)
         content_hash = record.get("content_hash", "")
-        meta = dict(record.get("metadata") or {})
+        # Strip server-owned provenance/security keys a crafted archive could
+        # use to spoof daemon output or downgrade the injection wrap (GH #37,
+        # shares the whitelist with the MCP boundary in GH #35).
+        meta = {
+            k: v
+            for k, v in (record.get("metadata") or {}).items()
+            if k not in SERVER_OWNED_METADATA_KEYS
+        }
         redacted = record.get("redacted", False)
 
         # Skip redacted records — content is "[REDACTED]", unusable.

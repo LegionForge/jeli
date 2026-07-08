@@ -8,6 +8,7 @@ from typing import Any
 
 from .config import Settings
 from .database.pool import AsyncPostgresPool
+from .portability import DEFAULT_IMPORT_TRUST_CEILING
 from .tools.memory_tools import MemoryTools
 from .tools.state_tools import StateTools
 
@@ -662,6 +663,7 @@ async def _run_import(settings: Settings, args) -> dict:
             chain_key=settings.chain_key,
             key_id=settings.chain_key_id,
             dry_run=args.dry_run,
+            trust_ceiling=args.trust_ceiling,
         )
         with open(args.path, encoding="utf-8") as inp:
             return await importer.import_stream(inp)
@@ -825,6 +827,14 @@ def main(argv: list[str] | None = None) -> int:
     import_p = sub.add_parser("import", help="import a JSON-Lines archive into the local store")
     import_p.add_argument("path")
     import_p.add_argument("--dry-run", dest="dry_run", action="store_true")
+    import_p.add_argument(
+        "--trust-ceiling",
+        dest="trust_ceiling",
+        type=float,
+        default=DEFAULT_IMPORT_TRUST_CEILING,
+        help="cap imported trust (default 0.3; raise only for a known-good "
+        "local restore of your own export)",
+    )
 
     args = parser.parse_args(argv)
     settings = Settings()

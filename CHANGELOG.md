@@ -62,6 +62,18 @@ corrupt and impossible to lock in.
 - **Safety-aware re-ranking**: `rerank=true` now applies a deterministic
   trust/flag penalty after relevance scoring, so engineered similarity
   cannot outrank provenance.
+- **Red-team remediation** (2026-07-07 audit, issues #35-#40): read-time
+  defenses consolidated into a single `apply_read_defenses` / `wrap_for_read`
+  choke point that every read surface calls. Server-owned provenance/security
+  metadata keys are stripped from agent input at the MCP boundary (#35);
+  `search_by_entity` now applies decay + wrapping (#36); the safety penalty
+  runs on all semantic searches, not just `rerank=true`, and flagged content
+  is demoted in fts ordering (#38); low-provenance synthesized insights get a
+  `<jeli:derived>` wrap (#39); `audit_trail` surfaces `injection_flagged` and
+  wraps flagged content (#40). The portability importer clamps imported trust
+  to a ceiling (default 0.3, `--trust-ceiling` to override) and strips
+  server-owned metadata, and the conflict resolver escalates rather than
+  auto-invalidating a user-tier memory on a recency tie (#37).
 
 ### Changed
 - `capture_memory` runs the write path through the Constitutional `WriteGate`

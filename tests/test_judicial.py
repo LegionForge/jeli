@@ -193,6 +193,54 @@ async def test_low_confidence_rediscovers():
     store.reinforce.assert_not_awaited()
 
 
+# ── user-tier tie guard (GH #37) ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_user_tier_tie_escalates_instead_of_invalidating():
+    """A recency tie between two user-tier (>=0.9) memories must not auto-
+    invalidate one; it escalates to the human queue."""
+    db = _db(fetchval="queue-1")
+    resolver = _resolver(db)
+    store = MagicMock()
+    store.pattern_hash = MagicMock(return_value="ph")
+    store.lookup = AsyncMock(return_value=None)
+    store.record = AsyncMock()
+
+    with patch(
+        "src.jeli_scoped_mcp.judicial.precedent.PrecedentStore", return_value=store
+    ), patch("src.jeli_scoped_mcp.tools.state_tools.StateTools") as MockState:
+        MockState.return_value.invalidate = AsyncMock()
+        await resolver._resolve_high(
+            _mem("new", 1.0, "identity"), _mem("old", 1.0, "identity"), "reason", "direct"
+        )
+        # No invalidation happened; the conflict was enqueued for the user.
+        MockState.return_value.invalidate.assert_not_awaited()
+    db.fetchval.assert_awaited()  # enqueue INSERT ... RETURNING id
+
+
+@pytest.mark.asyncio
+async def test_low_tier_tie_still_auto_resolves():
+    """A tie below user-tier resolves automatically (newer_wins), no escalation."""
+    db = _db()
+    resolver = _resolver(db)
+    store = MagicMock()
+    store.pattern_hash = MagicMock(return_value="ph")
+    store.lookup = AsyncMock(return_value=None)
+    store.record = AsyncMock()
+
+    with patch(
+        "src.jeli_scoped_mcp.judicial.precedent.PrecedentStore", return_value=store
+    ), patch("src.jeli_scoped_mcp.tools.memory_tools.MemoryTools"), patch(
+        "src.jeli_scoped_mcp.tools.state_tools.StateTools"
+    ) as MockState:
+        MockState.return_value.invalidate = AsyncMock()
+        await resolver._resolve_high(
+            _mem("new", 0.6, "preference"), _mem("old", 0.6, "preference"), "reason", "direct"
+        )
+        MockState.return_value.invalidate.assert_awaited_once()
+
+
 # ── HumanEscalationQueue ─────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

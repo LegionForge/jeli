@@ -30,7 +30,12 @@ from ..embedding.provider import EmbeddingProvider
 from ..graph import GraphStore
 from ..reranker.provider import RerankerProvider
 from ..security import VALID_CONTENT_CLASSES
-from ..tools.memory_tools import MemoryToolError, MemoryTools
+from ..tools.memory_tools import (
+    SERVER_OWNED_METADATA_KEYS,
+    MemoryToolError,
+    MemoryTools,
+    apply_read_defenses,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -291,6 +296,18 @@ class ScopedMCPServer:
             )
             trust, clamped = self._clamp_trust(arguments["trust_score"])
             metadata = dict(arguments.get("metadata") or {})
+            # Strip server-owned provenance/security keys an agent must not set
+            # (GH #35): forging them impersonates daemon output or downgrades the
+            # injection wrap. Internal callers bypass this by using MemoryTools.
+            stripped = [k for k in metadata if k in SERVER_OWNED_METADATA_KEYS]
+            for k in stripped:
+                del metadata[k]
+            if stripped:
+                logger.warning(
+                    "capture_memory: stripped server-owned metadata keys from "
+                    "agent input: %s",
+                    stripped,
+                )
             if clamped:
                 metadata["declared_trust"] = float(arguments["trust_score"])
                 metadata["trust_clamped_to"] = trust
@@ -338,6 +355,10 @@ class ScopedMCPServer:
                 entity_name=arguments["entity_name"],
                 limit=arguments.get("limit", 10),
             )
+            # Same read-time defenses as search_memory (GH #36): decay + wrap
+            # flagged / low-trust-procedural / derived content. Was previously
+            # missing here, so the entity surface returned raw, non-decayed rows.
+            apply_read_defenses(entity_results)
             active_rules = await ConstitutionalManager().load_active_rules(self.db)
             if active_rules:
                 entity_results = ReadGate().apply(entity_results, actor=actor, rules=active_rules)
