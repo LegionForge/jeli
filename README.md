@@ -366,6 +366,7 @@ git config core.hooksPath .githooks
 | Doc | What it covers |
 |---|---|
 | [docs/background.md](docs/background.md) | **Why Jeli exists**: the driver (memory poisoning + memory enclosure), why governance instead of filters, the reasoning behind the 2026-07 hardening decisions, and where Jeli sits in the memory landscape |
+| [docs/trust-doctrine.md](docs/trust-doctrine.md) | **The epistemic foundation**: why a system can verify attribution but never truth, the user as the one firsthand sensor, ingestion-as-witnessing vs import-as-hearsay, and the verify-vs-support asymmetry every trust decision answers to |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | **Code-level architecture**: module map, the write/read/verify paths step by step, data model by migration, trust model, judicial case-law semantics |
 | [SECURITY.md](SECURITY.md) | Threat model (MINJA, recommendation poisoning, IJPI) and every defense layer |
 | [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) | Extended threat analysis |

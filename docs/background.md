@@ -3,7 +3,9 @@
 This document records the driver behind Jeli and the reasoning behind its
 design decisions, including the 2026-07 hardening round. The
 [README](../README.md) says *what* Jeli is; [ARCHITECTURE.md](ARCHITECTURE.md)
-says *how* it works; this says **why**.
+says *how* it works; this says **why**. The epistemic foundation underneath all
+of it, why the system can verify attribution but never truth, is in
+[trust-doctrine.md](trust-doctrine.md).
 
 ---
 
