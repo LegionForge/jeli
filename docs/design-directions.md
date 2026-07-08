@@ -72,6 +72,12 @@ across independent locations; components that are hard to take down
 simultaneously; Postgres distributed / high-availability capabilities. No single
 key should be able to lock the whole system out.
 
+**Progress:** chain-key *sourcing* is now pluggable (key-material tier: env,
+file, keychain, 1Password, passphrase), see [key-management.md](key-management.md).
+The signing-oracle tier (OpenBAO transit, KMS, HSM, FIDO2, threshold) that keeps
+the key out of process memory is the next step, and the "reads survive key loss"
+invariant is recorded there.
+
 ### b. Authenticated, identity-bound writes
 
 Inserts carry a verifiable identity and context, not just content. The shape:
