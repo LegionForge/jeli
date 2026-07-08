@@ -153,3 +153,4 @@ vendor and no memory startup ships it.
 - [OWASP Agent Memory Guard (ASI06)](https://owasp.org/www-project-agent-memory-guard/) — the standardization effort Jeli aligns with
 - [The Memory Wars](https://arxiv.org/pdf/2508.05867) — network effects and the three-tier market analysis
 - [Griot / Jeli](https://en.wikipedia.org/wiki/Griot) — the name's origin: oral historian, keeper of memory, mediator
+- Angela Shelf Medearis & Terea Shaffer, [*The Singing Man*](https://www.goodreads.com/en/book/show/3067748) (Holiday House, 1994) — the personal inspiration behind the name; see the README's "Why Jeli?" section

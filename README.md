@@ -8,6 +8,8 @@ A [jeli](https://en.wikipedia.org/wiki/Griot) (ߖߋ߬ߟߌ, the northern Mande na
 
 That is exactly what this project does for personal AI memory: keep the record faithfully (hash-chained provenance), attest where every fact came from (trust-scored writes), mediate when memories contradict (the judicial layer), and answer to the person whose memory it keeps — never to the systems writing into it (the constitutional layer). The name is a commitment: memory as a trust, not a commodity.
 
+The name is also personal. [*The Singing Man*](https://www.goodreads.com/en/book/show/3067748) by Angela Shelf Medearis, illustrated by Terea Shaffer (Holiday House, 1994), retells the Yoruba story of Banzar — the son who chooses music over an approved trade, apprentices himself to an old praise singer, and returns home carrying his people's songs and histories. I read that book to my son Dylan from the time he was a baby until he was a young boy, and its lessons stayed with our family: that the keepers of songs and histories are keepers of identity — mediators and advisors, entrusted with what a community knows about itself — and that following your passion can itself become a gift to the world. Medearis, Shaffer, and the praise singers they honor have had a profound impact on me and my family. This project is my attempt to live up to that: to build something as useful to the people who rely on it as a praise singer is to a village.
+
 ## The Problem
 
 As of 2026, memory poisoning attacks are documented and active:
