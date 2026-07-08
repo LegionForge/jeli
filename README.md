@@ -30,7 +30,9 @@ Jeli adds cryptographic integrity and governance to memory systems:
 - **Temporal boundaries**: facts age and invalidate; old records never delete
 - **Amendment tracking**: full history of how facts changed
 - **User veto**: you control irreversible agent actions
-- **Structural sovereignty**: security enforced by architecture, not promises
+- **Structural defense-in-depth**: security leans on architecture and least-privilege, in layers you configure, rather than on good behavior
+
+Jeli makes poisoning harder and tampering evident, in layers you can turn on and off. It does not make memory "secure," "guaranteed authentic," or "tamper-proof." Like a safe, it is only as safe as you configure and defend it, and no single layer is a guarantee. See [docs/trust-doctrine.md](docs/trust-doctrine.md) for what it can and cannot promise, and [docs/design-directions.md](docs/design-directions.md) for where it is going.
 
 ## Architecture
 
@@ -237,7 +239,7 @@ flowchart TB
 **Division of responsibility:**
 - **OB1**: ingestion breadth, retrieval quality, multi-AI access (what it does best)
 - **Jeli**: cryptographic integrity, injection defense, trust scoring, audit trail, user veto (what it does best)
-- **Together**: trustworthy, sovereign memory that multiple AIs can safely use, with a verifiable chain of custody for every fact
+- **Together**: sovereign memory that multiple AIs can use with a verifiable chain of custody for every fact, and known, documented limits
 
 **Current Status:** Exploring partnership with Nate. See [Extension Proposal](https://github.com/NateBJones-Projects/OB1/issues) for feedback. Can also be deployed standalone.
 
