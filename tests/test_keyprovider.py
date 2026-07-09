@@ -184,13 +184,14 @@ def test_onepassword_provider_rejects_bad_ref():
 def test_openbao_provider_reads_field():
     from subprocess import CompletedProcess
 
+    ok = CompletedProcess(args=[], returncode=0, stdout="bao-key\n", stderr="")
     s = _settings(key_provider="openbao", key_ref="secret/jeli-chain-key#value")
     with patch(
         "jeli_scoped_mcp.keyprovider.providers.subprocess.run",
-        return_value=CompletedProcess(args=[], returncode=0, stdout="bao-key\n", stderr=""),
+        side_effect=[ok, ok],
     ) as run:
         assert resolve_chain_key(s) == "bao-key"
-    argv = run.call_args.args[0]
+    argv = run.call_args_list[0].args[0]
     assert argv[:4] == ["bao", "kv", "get", "-field"]
     assert argv[4] == "value" and argv[5] == "secret/jeli-chain-key"
 
@@ -198,18 +199,42 @@ def test_openbao_provider_reads_field():
 def test_openbao_provider_defaults_field_to_value():
     from subprocess import CompletedProcess
 
+    ok = CompletedProcess(args=[], returncode=0, stdout="k\n", stderr="")
     s = _settings(key_provider="openbao", key_ref="secret/jeli-chain-key")
     with patch(
         "jeli_scoped_mcp.keyprovider.providers.subprocess.run",
-        return_value=CompletedProcess(args=[], returncode=0, stdout="k\n", stderr=""),
+        side_effect=[ok, ok],
     ) as run:
         resolve_chain_key(s)
-    assert run.call_args.args[0][4] == "value"
+    assert run.call_args_list[0].args[0][4] == "value"
 
 
 def test_openbao_provider_missing_ref_raises():
     s = _settings(key_provider="openbao", key_ref="")
     with pytest.raises(KeyProviderError, match="needs SCOPED_MCP_KEY_REF"):
+        resolve_chain_key(s)
+
+
+def test_openbao_provider_rejects_flag_like_path():
+    s = _settings(key_provider="openbao", key_ref="-badflag#value")
+    with pytest.raises(KeyProviderError, match="must not start with '-'"):
+        resolve_chain_key(s)
+
+
+def test_openbao_provider_rejects_flag_like_field():
+    s = _settings(key_provider="openbao", key_ref="secret/jeli-chain-key#-badflag")
+    with pytest.raises(KeyProviderError, match="must not start with '-'"):
+        resolve_chain_key(s)
+
+
+def test_keychain_provider_rejects_flag_like_service(monkeypatch):
+    import types
+
+    monkeypatch.setitem(
+        __import__("sys").modules, "keyring", types.SimpleNamespace(get_password=lambda s, a: "x")
+    )
+    s = _settings(key_provider="keychain", key_ref="-badflag")
+    with pytest.raises(KeyProviderError, match="must not start with '-'"):
         resolve_chain_key(s)
 
 
@@ -223,3 +248,92 @@ def test_openbao_provider_cli_failure_raises():
     ):
         with pytest.raises(KeyProviderError, match="OpenBAO read failed"):
             resolve_chain_key(s)
+
+
+def test_openbao_warns_when_token_has_write_access(caplog):
+    import logging
+    from subprocess import CompletedProcess
+
+    s = _settings(key_provider="openbao", key_ref="secret/jeli-chain-key#value")
+    kv_get = CompletedProcess(args=[], returncode=0, stdout="bao-key\n", stderr="")
+    # First capabilities check (user-facing path) returns write caps → warns immediately
+    caps_out = CompletedProcess(args=[], returncode=0, stdout="create, read, update\n", stderr="")
+    with patch(
+        "jeli_scoped_mcp.keyprovider.providers.subprocess.run",
+        side_effect=[kv_get, caps_out],
+    ):
+        with caplog.at_level(logging.WARNING, logger="jeli_scoped_mcp.keyprovider.providers"):
+            result = resolve_chain_key(s)
+    assert result == "bao-key"
+    assert "write access" in caplog.text
+    assert "create" in caplog.text or "update" in caplog.text
+
+
+def test_openbao_warns_on_root_token(caplog):
+    import logging
+    from subprocess import CompletedProcess
+
+    s = _settings(key_provider="openbao", key_ref="secret/jeli-chain-key#value")
+    kv_get = CompletedProcess(args=[], returncode=0, stdout="bao-key\n", stderr="")
+    caps_root = CompletedProcess(args=[], returncode=0, stdout="root\n", stderr="")
+    with patch(
+        "jeli_scoped_mcp.keyprovider.providers.subprocess.run",
+        side_effect=[kv_get, caps_root],
+    ):
+        with caplog.at_level(logging.WARNING, logger="jeli_scoped_mcp.keyprovider.providers"):
+            result = resolve_chain_key(s)
+    assert result == "bao-key"
+    assert "root token" in caplog.text
+
+
+def test_openbao_warns_via_kvv2_data_path(caplog):
+    """Warn when first path returns deny but KVv2 data path reveals write access."""
+    import logging
+    from subprocess import CompletedProcess
+
+    s = _settings(key_provider="openbao", key_ref="secret/jeli-chain-key#value")
+    kv_get = CompletedProcess(args=[], returncode=0, stdout="bao-key\n", stderr="")
+    deny = CompletedProcess(args=[], returncode=0, stdout="deny\n", stderr="")
+    caps_write = CompletedProcess(args=[], returncode=0, stdout="create, read, update\n", stderr="")
+    with patch(
+        "jeli_scoped_mcp.keyprovider.providers.subprocess.run",
+        side_effect=[kv_get, deny, caps_write],
+    ):
+        with caplog.at_level(logging.WARNING, logger="jeli_scoped_mcp.keyprovider.providers"):
+            result = resolve_chain_key(s)
+    assert result == "bao-key"
+    assert "write access" in caplog.text
+
+
+def test_openbao_no_warn_when_token_is_read_only(caplog):
+    import logging
+    from subprocess import CompletedProcess
+
+    s = _settings(key_provider="openbao", key_ref="secret/jeli-chain-key#value")
+    kv_get = CompletedProcess(args=[], returncode=0, stdout="bao-key\n", stderr="")
+    # Both path checks return read/deny only
+    read_only = CompletedProcess(args=[], returncode=0, stdout="read\n", stderr="")
+    deny = CompletedProcess(args=[], returncode=0, stdout="deny\n", stderr="")
+    with patch(
+        "jeli_scoped_mcp.keyprovider.providers.subprocess.run",
+        side_effect=[kv_get, read_only, deny],
+    ):
+        with caplog.at_level(logging.WARNING, logger="jeli_scoped_mcp.keyprovider.providers"):
+            result = resolve_chain_key(s)
+    assert result == "bao-key"
+    assert "write access" not in caplog.text
+    assert "root token" not in caplog.text
+
+
+def test_openbao_capability_check_failure_does_not_block():
+    import subprocess
+    from subprocess import CompletedProcess
+
+    s = _settings(key_provider="openbao", key_ref="secret/jeli-chain-key#value")
+    kv_get = CompletedProcess(args=[], returncode=0, stdout="bao-key\n", stderr="")
+    err = subprocess.CalledProcessError(1, "bao")
+    with patch(
+        "jeli_scoped_mcp.keyprovider.providers.subprocess.run",
+        side_effect=[kv_get, err, err],
+    ):
+        assert resolve_chain_key(s) == "bao-key"

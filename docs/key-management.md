@@ -29,6 +29,38 @@ There is a fundamental split, and it drives the whole design:
 | `openbao` | `<kv-path>#<field>` (field default `value`) | Reads a KV secret via the `bao` CLI. Uses ambient `BAO_ADDR` / `BAO_TOKEN`; the vault must be unsealed and the caller authenticated. This is OpenBAO as a key *store*, not the transit signing oracle below. |
 | `passphrase` | salt (hex) | Derives the key from an interactively-entered passphrase via scrypt (n=2^15). Reproducible given the same passphrase and salt. Non-interactive use reads `SCOPED_MCP_PASSPHRASE`. |
 
+### OpenBAO: required policy
+
+The Jeli process token must be **read-only** on the chain key path.
+Write access (`create`/`update`) on that path lets any holder of the token
+replace the key silently, recompute all HMACs over tampered content, and pass
+`jeli verify` — breaking the integrity guarantee entirely.
+
+Create a policy that grants only read and list:
+
+```hcl
+# jeli-read.hcl
+path "secret/data/jeli-chain-key" {
+  capabilities = ["read"]
+}
+path "secret/metadata/jeli-chain-key" {
+  capabilities = ["list"]
+}
+```
+
+Apply it and issue a token:
+
+```bash
+bao policy write jeli-read jeli-read.hcl
+bao token create -policy=jeli-read -ttl=2160h -renewable=true \
+  -display-name=jeli-mcp -field=token
+```
+
+Set the returned token as `BAO_TOKEN` in Jeli's environment (`.env` or systemd
+unit). At startup Jeli will call `bao token capabilities <path>` and log a
+warning if the token can still write; verify the warning is absent after
+switching to the restricted token.
+
 ### Two ways to use OpenBAO
 
 - **KV store (`openbao`, above): available now.** OpenBAO holds, access-controls,

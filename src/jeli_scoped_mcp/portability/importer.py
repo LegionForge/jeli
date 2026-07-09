@@ -9,6 +9,11 @@ Import semantics:
   - Redacted records in the export are skipped (content is [REDACTED]).
   - Records whose content_hash doesn't match the content string are rejected
     (tamper detection on the archive itself).
+  - Records whose record_hash verifies against the local chain key are treated
+    as provably own-store content: trust is preserved at the original level and
+    import_hmac_verified is stamped in metadata (GH #41). Records that don't
+    verify (different key, tampered archive, missing hash) are still imported but
+    clamped to the import trust ceiling — the GH #37 default-deny stays intact.
   - The import actor is stamped as "jeli-import" with original provenance in
     metadata so the audit trail is transparent.
   - Duplicate content (same content_hash already present) is skipped, not
@@ -20,10 +25,12 @@ source chain key — it's a new chain at the destination.
 """
 
 import hashlib
+import hmac
 import json
 import logging
 from typing import IO
 
+from ..core.hash_chain import build_canonical_record, compute_record_hash
 from ..database.pool import AsyncPostgresPool
 from ..embedding.provider import EmbeddingProvider
 from ..tools.memory_tools import SERVER_OWNED_METADATA_KEYS, MemoryTools
@@ -142,6 +149,33 @@ class MemoryImporter:
             "dry_run": self.dry_run,
         }
 
+    def _try_verify_hmac(self, record: dict, original_meta: dict | None) -> bool:
+        """Return True if record's HMAC verifies against the local chain key (GH #41).
+
+        Verification proves the record originated from a store sharing this chain
+        key — an attacker cannot forge a valid HMAC without the key. Any exception
+        is silently swallowed; failure is always False, never a hard error.
+        """
+        record_hash = record.get("record_hash")
+        key_id = record.get("key_id")
+        if not record_hash or key_id != self.key_id:
+            return False
+        try:
+            canonical = build_canonical_record(
+                content=record.get("content", ""),
+                embedding_model=record.get("embedding_model", ""),
+                embedding_dimensions=int(record.get("embedding_dimensions") or 0),
+                trust_score=float(record.get("trust_score", 0.5)),
+                memory_type=record.get("memory_type", "episodic"),
+                key_id=key_id,
+                metadata=original_meta if original_meta else None,
+            )
+            prev_hash = record.get("prev_hash") or None
+            expected = compute_record_hash(self.chain_key, canonical, prev_hash)
+            return hmac.compare_digest(record_hash, expected)
+        except Exception:  # noqa: BLE001 — verification is best-effort
+            return False
+
     async def _import_record(
         self,
         record: dict,
@@ -150,15 +184,25 @@ class MemoryImporter:
     ) -> str:
         content = record.get("content", "")
         memory_type = record.get("memory_type", "episodic")
-        # Clamp untrusted archive trust to the import ceiling (GH #37).
-        trust_score = min(float(record.get("trust_score", 0.5)), self.trust_ceiling)
         content_hash = record.get("content_hash", "")
+
+        # Save original metadata (pre-strip) for HMAC verification (GH #41).
+        original_meta = dict(record.get("metadata") or {})
+        hmac_verified = self._try_verify_hmac(record, original_meta)
+
+        # Trust: preserved for HMAC-verified own-store records (GH #41);
+        # clamped to import ceiling for everything else (GH #37 default-deny).
+        if hmac_verified:
+            trust_score = float(record.get("trust_score", 0.5))
+        else:
+            trust_score = min(float(record.get("trust_score", 0.5)), self.trust_ceiling)
+
         # Strip server-owned provenance/security keys a crafted archive could
         # use to spoof daemon output or downgrade the injection wrap (GH #37,
         # shares the whitelist with the MCP boundary in GH #35).
         meta = {
             k: v
-            for k, v in (record.get("metadata") or {}).items()
+            for k, v in original_meta.items()
             if k not in SERVER_OWNED_METADATA_KEYS
         }
         redacted = record.get("redacted", False)
@@ -190,6 +234,7 @@ class MemoryImporter:
             "original_created_by": record.get("created_by"),
             "original_source_agent": record.get("source_agent"),
             "import_actor": IMPORT_ACTOR,
+            "hmac_verified": hmac_verified,
         }
         content_class = meta.pop("content_class", "general")
 

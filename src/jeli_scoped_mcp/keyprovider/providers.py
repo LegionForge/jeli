@@ -21,6 +21,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _reject_flag_like(value: str, label: str) -> None:
+    """Guard against config values a target CLI could misparse as an option.
+
+    subprocess.run with a fixed argv list has no shell injection surface, but
+    a config-controlled value starting with '-' can still be read as a flag
+    by the target CLI's own argument parser instead of the positional data it
+    was meant to be. Reject that shape rather than pass it through.
+    """
+    if value.startswith("-"):
+        raise KeyProviderError(f"{label} must not start with '-': {value!r}")
+
+
 @register
 class EnvKeyProvider(KeyProvider):
     """Default: the key already loaded from the environment / .env file.
@@ -74,6 +86,8 @@ class KeychainKeyProvider(KeyProvider):
     def resolve(self, settings: Settings, *, prompt: bool = True) -> str:
         service = settings.key_ref or "jeli-chain-key"
         account = settings.chain_key_id
+        _reject_flag_like(service, "SCOPED_MCP_KEY_REF")
+        _reject_flag_like(account, "chain key id")
         try:
             import keyring
 
@@ -86,7 +100,7 @@ class KeychainKeyProvider(KeyProvider):
         except ImportError:
             pass  # fall back to the macOS CLI
         try:
-            out = subprocess.run(  # nosec B603 B607 — fixed argv, no shell
+            out = subprocess.run(  # nosec B603 B607 — shell=False, fixed argv; service/account validated above
                 ["security", "find-generic-password", "-s", service, "-a", account, "-w"],
                 capture_output=True,
                 text=True,
@@ -119,7 +133,7 @@ class OnePasswordKeyProvider(KeyProvider):
                 "key provider '1password' needs SCOPED_MCP_KEY_REF = op://vault/item/field"
             )
         try:
-            out = subprocess.run(  # nosec B603 B607 — fixed argv, no shell
+            out = subprocess.run(  # nosec B603 B607 — shell=False, fixed argv; ref is checked to start with "op://" above, so it can't be misread as a flag
                 ["op", "read", ref],
                 capture_output=True,
                 text=True,
@@ -160,20 +174,79 @@ class OpenBAOKeyProvider(KeyProvider):
             )
         path, _, field = ref.partition("#")
         field = field or "value"
+        _reject_flag_like(path, "SCOPED_MCP_KEY_REF path")
+        _reject_flag_like(field, "SCOPED_MCP_KEY_REF field")
         try:
-            out = subprocess.run(  # nosec B603 B607 — fixed argv, no shell
+            out = subprocess.run(  # nosec B603 B607 — shell=False, fixed argv; path/field validated above
                 ["bao", "kv", "get", "-field", field, path],
                 capture_output=True,
                 text=True,
                 timeout=30,
                 check=True,
             )
-            return out.stdout.strip()
+            key = out.stdout.strip()
         except (OSError, subprocess.SubprocessError) as exc:
             raise KeyProviderError(
                 "OpenBAO read failed (is 'bao' installed, BAO_ADDR/BAO_TOKEN set, "
                 f"and the vault unsealed?): {exc}"
             ) from exc
+        self._warn_if_writable(path)
+        return key
+
+    @staticmethod
+    def _warn_if_writable(path: str) -> None:
+        """Warn at startup if the active BAO token can overwrite the chain key.
+
+        Write access (create/update) on the chain key path lets any holder of
+        this token silently replace the key and forge a valid hash chain.  The
+        Jeli process token should be read-only; see docs/key-management.md.
+
+        Checks both the user-facing KV path and the KVv2 data path (e.g.
+        secret/jeli-chain-key → secret/data/jeli-chain-key) because OpenBAO
+        policies are written against the data path while the kv subcommand
+        accepts the user-facing path.  "root" capability implies all access.
+
+        Best-effort: any subprocess failure is swallowed so it never blocks startup.
+        """
+        # Check both KVv1-style path and KVv2 data path so policy grants are caught
+        # regardless of how the mount was configured.
+        paths_to_check = [path]
+        parts = path.split("/", 1)
+        if len(parts) == 2:
+            paths_to_check.append(f"{parts[0]}/data/{parts[1]}")
+
+        for check_path in paths_to_check:
+            try:
+                out = subprocess.run(  # nosec B603 B607 — shell=False, fixed argv; check_path derives from an already-validated path
+                    ["bao", "token", "capabilities", check_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=True,
+                )
+                caps = {c.strip().lower() for c in out.stdout.split(",")}
+                if "root" in caps:
+                    logger.warning(
+                        "OpenBAO root token is being used for Jeli — root has unrestricted "
+                        "write access to the chain key path %r; provision a read-only token "
+                        "(see docs/key-management.md)",
+                        path,
+                    )
+                    return
+                write_caps = caps & {"create", "update", "delete"}
+                if write_caps:
+                    # only capability names (e.g. "create,update") and the KV path are
+                    # logged below — never the token value itself
+                    logger.warning(  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+                        "OpenBAO token has write access (%s) to chain key path %r — "
+                        "anyone holding this token can replace the key and forge records; "
+                        "provision a read-only token for Jeli (see docs/key-management.md)",
+                        ", ".join(sorted(write_caps)),
+                        path,
+                    )
+                    return
+            except Exception:  # nosec B110  # noqa: BLE001 — capability check is best-effort
+                pass
 
 
 @register

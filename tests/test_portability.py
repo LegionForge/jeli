@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from jeli_scoped_mcp.core.hash_chain import build_canonical_record, compute_record_hash
 from jeli_scoped_mcp.portability.exporter import MemoryExporter
 from jeli_scoped_mcp.portability.importer import ImportError, MemoryImporter
 
@@ -501,6 +502,171 @@ class TestExporterBranches:
         out = io.StringIO()
         result = await MemoryExporter(db=db).export(out)
         assert result["chain_valid"] is False
+
+
+# ── GH #41: HMAC-verified import (trust preservation) ────────────────────────
+
+
+def _make_hmac_verified_record(
+    content: str,
+    chain_key: str,
+    key_id: str = "k1",
+    trust_score: float = 0.8,
+    metadata: dict | None = None,
+    prev_hash: str | None = None,
+) -> dict:
+    """Build an export record whose record_hash was signed by chain_key."""
+    meta = metadata if metadata is not None else {"content_class": "general"}
+    content_hash = hashlib.sha256(content.encode()).hexdigest()
+    canonical = build_canonical_record(
+        content=content,
+        embedding_model="test/embed",
+        embedding_dimensions=1024,
+        trust_score=trust_score,
+        memory_type="semantic",
+        key_id=key_id,
+        metadata=meta if meta else None,
+    )
+    record_hash = compute_record_hash(chain_key, canonical, prev_hash)
+    return {
+        "id": str(uuid.uuid4()),
+        "content": content,
+        "memory_type": "semantic",
+        "trust_score": trust_score,
+        "content_hash": content_hash,
+        "embedding_model": "test/embed",
+        "embedding_dimensions": 1024,
+        "metadata": meta,
+        "record_hash": record_hash,
+        "prev_hash": prev_hash,
+        "key_id": key_id,
+        "redacted": False,
+        "created_at": datetime.now(UTC).isoformat(),
+        "created_by": "test-actor",
+        "source_agent": "test-agent",
+    }
+
+
+class TestHmacVerifiedImport:
+    """GH #41 — HMAC-verified import preserves trust; unverified stays clamped."""
+
+    def _make_importer(self, chain_key: str = "test-chain-key", key_id: str = "k1"):
+        db = MagicMock()
+
+        async def fetchall(query, *args):
+            if "content_hash" in query:
+                return []
+            if "constitutional_rules" in query:
+                return []
+            return []
+
+        async def fetchrow(query, *args):
+            return None
+
+        db.fetchall = fetchall
+        db.fetchrow = fetchrow
+
+        with patch("jeli_scoped_mcp.portability.importer.MemoryTools") as mock_cls:
+            mock_tools = MagicMock()
+            mock_tools.capture_memory = AsyncMock(
+                return_value={"id": str(uuid.uuid4()), "trust_score": 0.8, "record_hash": "x"}
+            )
+            mock_cls.return_value = mock_tools
+            importer = MemoryImporter(
+                db=db, embedder=MagicMock(), chain_key=chain_key, key_id=key_id
+            )
+            importer._tools = mock_tools
+        return importer, mock_tools
+
+    @pytest.mark.asyncio
+    async def test_verified_record_preserves_original_trust(self):
+        """A record signed by the local chain key is imported at original trust (no ceiling)."""
+        chain_key = "test-chain-key"
+        rec = _make_hmac_verified_record("verified memory", chain_key, trust_score=0.9)
+        importer, mock_tools = self._make_importer(chain_key=chain_key)
+        await importer.import_stream(_make_export_stream([rec]))
+        trust = mock_tools.capture_memory.call_args.kwargs["trust_score"]
+        assert trust == 0.9
+
+    @pytest.mark.asyncio
+    async def test_unverified_record_still_clamped_to_ceiling(self):
+        """A record with wrong chain key is still imported but trust is clamped."""
+        rec = _make_hmac_verified_record("foreign memory", "other-chain-key", trust_score=0.9)
+        importer, mock_tools = self._make_importer(chain_key="test-chain-key")
+        await importer.import_stream(_make_export_stream([rec]))
+        trust = mock_tools.capture_memory.call_args.kwargs["trust_score"]
+        assert trust == 0.3  # default ceiling
+
+    @pytest.mark.asyncio
+    async def test_missing_record_hash_falls_back_to_ceiling(self):
+        """Records without record_hash (older exports) fall back to trust ceiling."""
+        rec = _record_dict("no hash record", trust_score=0.8)
+        importer, mock_tools = self._make_importer()
+        await importer.import_stream(_make_export_stream([rec]))
+        trust = mock_tools.capture_memory.call_args.kwargs["trust_score"]
+        assert trust == 0.3
+
+    @pytest.mark.asyncio
+    async def test_wrong_key_id_falls_back_to_ceiling(self):
+        """key_id mismatch skips HMAC check entirely and applies ceiling."""
+        rec = _make_hmac_verified_record("memory", "test-chain-key", key_id="k99", trust_score=0.9)
+        importer, mock_tools = self._make_importer(chain_key="test-chain-key", key_id="k1")
+        await importer.import_stream(_make_export_stream([rec]))
+        trust = mock_tools.capture_memory.call_args.kwargs["trust_score"]
+        assert trust == 0.3
+
+    @pytest.mark.asyncio
+    async def test_tampered_hash_falls_back_to_ceiling(self):
+        """A record whose record_hash was altered after signing fails verify → ceiling."""
+        rec = _make_hmac_verified_record("memory", "test-chain-key", trust_score=0.9)
+        rec["record_hash"] = "deadbeef" * 8  # corrupt the hash
+        importer, mock_tools = self._make_importer(chain_key="test-chain-key")
+        await importer.import_stream(_make_export_stream([rec]))
+        trust = mock_tools.capture_memory.call_args.kwargs["trust_score"]
+        assert trust == 0.3
+
+    @pytest.mark.asyncio
+    async def test_verified_record_stamps_hmac_verified_in_metadata(self):
+        """Verified records carry import_hmac_verified: True in imported_from metadata."""
+        chain_key = "test-chain-key"
+        rec = _make_hmac_verified_record("stamped memory", chain_key, trust_score=0.7)
+        importer, mock_tools = self._make_importer(chain_key=chain_key)
+        await importer.import_stream(_make_export_stream([rec]))
+        meta = mock_tools.capture_memory.call_args.kwargs["metadata"]
+        assert meta["imported_from"]["hmac_verified"] is True
+
+    @pytest.mark.asyncio
+    async def test_unverified_record_stamps_hmac_verified_false(self):
+        """Unverified records carry import_hmac_verified: False in imported_from metadata."""
+        rec = _record_dict("unverified memory", trust_score=0.7)
+        importer, mock_tools = self._make_importer()
+        await importer.import_stream(_make_export_stream([rec]))
+        meta = mock_tools.capture_memory.call_args.kwargs["metadata"]
+        assert meta["imported_from"]["hmac_verified"] is False
+
+    @pytest.mark.asyncio
+    async def test_verified_record_still_strips_server_owned_metadata(self):
+        """HMAC verification doesn't bypass the metadata whitelist (GH #37 stays intact)."""
+        chain_key = "test-chain-key"
+        dangerous_meta = {
+            "content_class": "general",
+            "injection_flagged": False,
+            "trust_override_reason": "spoof",
+        }
+        rec = _make_hmac_verified_record(
+            "spoofed memory", chain_key, trust_score=0.9, metadata=dangerous_meta
+        )
+        importer, mock_tools = self._make_importer(chain_key=chain_key)
+        await importer.import_stream(_make_export_stream([rec]))
+        meta = mock_tools.capture_memory.call_args.kwargs["metadata"]
+        assert "injection_flagged" not in meta
+        assert "trust_override_reason" not in meta
+
+    def test_try_verify_hmac_swallows_exceptions(self):
+        """_try_verify_hmac never raises — bad embedding_dimensions etc. → False."""
+        importer, _ = self._make_importer()
+        record = {"record_hash": "x", "key_id": "k1", "embedding_dimensions": "not-an-int"}
+        assert importer._try_verify_hmac(record, {}) is False
 
 
 # ── round-trip sanity ─────────────────────────────────────────────────────────
