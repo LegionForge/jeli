@@ -1,5 +1,6 @@
 """Unit tests for the Judicial precedent system — all DB calls mocked."""
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -34,12 +35,99 @@ def _precedent_row(
 
 
 def _db(fetchrow=None, fetchall=None, fetchval=None, execute_result="UPDATE 1"):
+    """Simple mock for tests that don't exercise record()/reinforce() directly."""
     db = MagicMock()
     db.fetchrow = AsyncMock(return_value=fetchrow)
     db.fetchall = AsyncMock(return_value=fetchall or [])
     db.fetchval = AsyncMock(return_value=fetchval)
     db.execute = AsyncMock(return_value=execute_result)
+
+    @asynccontextmanager
+    async def _locked(_key):
+        yield db
+
+    db.locked_transaction = _locked
     return db
+
+
+class FakeJudicialDB:
+    """In-memory judicial_precedent + judicial_precedent_corroboration.
+
+    Real enough to exercise PrecedentStore's actual gating logic (agreement/
+    dissent/overturn, new-source-vs-repeat-source) rather than just counting
+    mock calls.
+    """
+
+    def __init__(self):
+        self.precedents: dict[str, dict] = {}
+        self._next_id = 1
+        self.corroboration: set[tuple[str, str]] = set()
+
+    @asynccontextmanager
+    async def locked_transaction(self, _key):
+        yield self
+
+    def _row(self, phash: str) -> dict | None:
+        return self.precedents.get(phash)
+
+    async def fetchrow(self, query: str, *args):
+        if "SELECT * FROM judicial_precedent WHERE pattern_hash" in query:
+            return self._row(args[0])
+        if "INSERT INTO judicial_precedent" in query and "RETURNING" in query:
+            phash, ctype, resolution, winner_rule, confidence = args
+            pid = f"p{self._next_id}"
+            self._next_id += 1
+            row = {
+                "id": pid,
+                "pattern_hash": phash,
+                "contradiction_type": ctype,
+                "resolution": resolution,
+                "winner_rule": winner_rule,
+                "confidence": confidence,
+                "applied_count": 1,
+                "first_set_at": None,
+                "last_applied_at": None,
+            }
+            self.precedents[phash] = row
+            return row
+        if query.strip().startswith("UPDATE judicial_precedent") and "RETURNING" in query:
+            count, confidence, resolution, winner_rule, phash = args
+            row = self.precedents[phash]
+            row.update(
+                applied_count=count,
+                confidence=confidence,
+                resolution=resolution,
+                winner_rule=winner_rule,
+            )
+            return row
+        if "SELECT 1 FROM judicial_precedent_corroboration" in query:
+            pid, source_key = args
+            return {"1": 1} if (pid, source_key) in self.corroboration else None
+        raise AssertionError(f"unexpected fetchrow: {query}")
+
+    async def execute(self, query: str, *args):
+        if "INSERT INTO judicial_precedent_corroboration" in query:
+            pid, source_key = args
+            self.corroboration.add((pid, source_key))
+            return "INSERT 1"
+        if query.strip().startswith("UPDATE judicial_precedent"):
+            if len(args) == 3:
+                ceiling, step, pid = args
+                for row in self.precedents.values():
+                    if row["id"] == pid:
+                        row["applied_count"] += 1
+                        row["confidence"] = min(ceiling, row["confidence"] + step)
+                        return "UPDATE 1"
+            else:
+                (pid,) = args
+                for row in self.precedents.values():
+                    if row["id"] == pid:
+                        row["applied_count"] += 1
+                        return "UPDATE 1"
+        raise AssertionError(f"unexpected execute: {query}")
+
+    def get(self, phash: str) -> dict:
+        return self.precedents[phash]
 
 
 def _resolver(db):
@@ -94,9 +182,9 @@ async def test_record_then_lookup():
 async def test_reinforce_increments_count():
     store = PrecedentStore()
     db = _db()
-    await store.reinforce(db, "p1")
-    db.execute.assert_awaited_once()
-    query = db.execute.await_args.args[0]
+    await store.reinforce(db, "p1", "agent-a")
+    assert db.execute.await_count == 2
+    query = db.execute.await_args_list[0].args[0]
     assert "applied_count = applied_count + 1" in query
 
 
@@ -119,6 +207,106 @@ async def test_list_precedents_empty():
     store = PrecedentStore()
     results = await store.list_precedents(db)
     assert results == []
+
+
+# ── GH #44: corroboration gate (Sybil resistance) ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_first_agreement_sets_base_confidence():
+    db = FakeJudicialDB()
+    store = PrecedentStore()
+    p = await store.record(db, "ph", "direct", "trust_wins", "rule", "agent-a")
+    assert p.confidence == 0.5
+    assert p.applied_count == 1
+
+
+@pytest.mark.asyncio
+async def test_repeat_agreement_same_source_does_not_raise_confidence():
+    db = FakeJudicialDB()
+    store = PrecedentStore()
+    await store.record(db, "ph", "direct", "trust_wins", "rule", "agent-a")
+    p = await store.record(db, "ph", "direct", "trust_wins", "rule", "agent-a")
+    p2 = await store.record(db, "ph", "direct", "trust_wins", "rule", "agent-a")
+    # applied_count still grows (observability) — confidence does not.
+    assert p2.applied_count == 3
+    assert p.confidence == 0.5
+    assert p2.confidence == 0.5
+
+
+@pytest.mark.asyncio
+async def test_agreement_from_new_distinct_source_raises_confidence():
+    db = FakeJudicialDB()
+    store = PrecedentStore()
+    await store.record(db, "ph", "direct", "trust_wins", "rule", "agent-a")
+    await store.record(db, "ph", "direct", "trust_wins", "rule", "agent-a")  # repeat, no bump
+    p = await store.record(db, "ph", "direct", "trust_wins", "rule", "agent-b")  # new source
+    assert p.confidence == pytest.approx(0.6)
+    assert p.applied_count == 3
+
+
+@pytest.mark.asyncio
+async def test_sybil_flood_cannot_reach_apply_threshold_alone():
+    """One actor alone, however many times it 'agrees', never crosses 0.7."""
+    db = FakeJudicialDB()
+    store = PrecedentStore()
+    p = None
+    for _ in range(20):
+        p = await store.record(db, "ph", "direct", "trust_wins", "rule", "sybil-actor")
+    assert p.confidence == 0.5
+    assert p.applied_count == 20
+
+
+@pytest.mark.asyncio
+async def test_diverse_sources_can_reach_apply_threshold():
+    db = FakeJudicialDB()
+    store = PrecedentStore()
+    p = None
+    for i in range(3):  # agent-0 (base) + 2 new distinct sources -> 0.5 + 0.2 = 0.7
+        p = await store.record(db, "ph", "direct", "trust_wins", "rule", f"agent-{i}")
+    assert p.confidence == pytest.approx(0.7)
+
+
+@pytest.mark.asyncio
+async def test_dissent_erodes_confidence_regardless_of_source():
+    db = FakeJudicialDB()
+    store = PrecedentStore()
+    await store.record(db, "ph", "direct", "trust_wins", "rule", "agent-a")
+    p = await store.record(db, "ph", "direct", "newer_wins", "other-rule", "agent-b")
+    assert p.resolution == "trust_wins"  # kept — single dissent doesn't flip it
+    assert p.confidence == pytest.approx(0.4)
+
+
+@pytest.mark.asyncio
+async def test_sustained_dissent_overturns_and_resets_corroboration():
+    db = FakeJudicialDB()
+    store = PrecedentStore()
+    await store.record(db, "ph", "direct", "trust_wins", "rule", "agent-a")  # 0.5
+    await store.record(db, "ph", "direct", "newer_wins", "other-rule", "agent-b")  # dissent -> 0.4
+    await store.record(db, "ph", "direct", "newer_wins", "other-rule", "agent-c")  # dissent -> 0.3
+    p = await store.record(db, "ph", "direct", "newer_wins", "other-rule", "agent-d")  # overturn
+    assert p.resolution == "newer_wins"
+    assert p.confidence == 0.5
+    assert p.applied_count == 1
+    # post-overturn, the overturning source's own repeat agreement doesn't
+    # re-bump confidence either — it already corroborated the winning turn.
+    p2 = await store.record(db, "ph", "direct", "newer_wins", "other-rule", "agent-d")
+    assert p2.confidence == 0.5
+    p3 = await store.record(db, "ph", "direct", "newer_wins", "other-rule", "agent-e")
+    assert p3.confidence == pytest.approx(0.6)
+
+
+@pytest.mark.asyncio
+async def test_reinforce_gates_confidence_by_source_too():
+    db = FakeJudicialDB()
+    store = PrecedentStore()
+    await store.record(db, "ph", "direct", "trust_wins", "rule", "agent-a")
+    pid = db.get("ph")["id"]
+    await store.reinforce(db, pid, "agent-b")  # new source: bump
+    assert db.get("ph")["confidence"] == pytest.approx(0.6)
+    await store.reinforce(db, pid, "agent-b")  # repeat source: no bump
+    assert db.get("ph")["confidence"] == pytest.approx(0.6)
+    assert db.get("ph")["applied_count"] == 3
 
 
 # ── conflict resolver precedent path ─────────────────────────────────────────────
@@ -552,6 +740,7 @@ def _memory_row(id="m1", content="I prefer Python", trust=0.8, mtype="preference
         "memory_type": mtype,
         "created_at": None,
         "embedding": None,
+        "source_agent": "test-agent",
     }
 
 
