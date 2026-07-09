@@ -107,7 +107,7 @@ class Settings(BaseSettings):
         """Validate that all required settings are present."""
         if self.transport == "http" and not self.api_key:
             raise ValueError("SCOPED_MCP_API_KEY is required for http transport")
-        if not self.chain_key:
+        if self.key_provider == "env" and not self.chain_key:
             raise ValueError("SCOPED_MCP_CHAIN_KEY is required (hash-chain HMAC key)")
         if self.embedding_provider == "openai" and not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY is required when using OpenAI provider")
