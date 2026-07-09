@@ -126,6 +126,12 @@ class InboxWorker:
                 InboxStatus.APPROVED,
                 InboxStatus.MERGED,
             ):
+                # Attribute correctly: sanitize_content_async's fast path
+                # returns a regex hit as-is without ever calling the LLM, so
+                # a flag can be attributed to "llm_classifier" when it never
+                # actually reached the model (GH #33 mislabeling — all 9
+                # false holds in one session traced back to this).
+                regex_flagged = InjectionDefense.is_instruction_like(content)
                 try:
                     _, llm_flagged, _ = await InjectionDefense.sanitize_content_async(
                         content,
@@ -135,10 +141,12 @@ class InboxWorker:
                     )
                     if llm_flagged:
                         llm_held = True
-                        review_reason = "llm_classifier"
+                        review_reason = "regex_injection" if regex_flagged else "llm_classifier"
                         requires_review = True
                         logger.warning(
-                            "inbox %s: llm classifier flagged injection — holding", inbox_id
+                            "inbox %s: %s flagged injection — holding",
+                            inbox_id,
+                            "regex" if regex_flagged else "llm classifier",
                         )
                 except Exception:
                     logger.warning(
