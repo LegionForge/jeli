@@ -215,6 +215,29 @@ def test_openbao_provider_missing_ref_raises():
         resolve_chain_key(s)
 
 
+def test_openbao_provider_rejects_flag_like_path():
+    s = _settings(key_provider="openbao", key_ref="-badflag#value")
+    with pytest.raises(KeyProviderError, match="must not start with '-'"):
+        resolve_chain_key(s)
+
+
+def test_openbao_provider_rejects_flag_like_field():
+    s = _settings(key_provider="openbao", key_ref="secret/jeli-chain-key#-badflag")
+    with pytest.raises(KeyProviderError, match="must not start with '-'"):
+        resolve_chain_key(s)
+
+
+def test_keychain_provider_rejects_flag_like_service(monkeypatch):
+    import types
+
+    monkeypatch.setitem(
+        __import__("sys").modules, "keyring", types.SimpleNamespace(get_password=lambda s, a: "x")
+    )
+    s = _settings(key_provider="keychain", key_ref="-badflag")
+    with pytest.raises(KeyProviderError, match="must not start with '-'"):
+        resolve_chain_key(s)
+
+
 def test_openbao_provider_cli_failure_raises():
     import subprocess
 

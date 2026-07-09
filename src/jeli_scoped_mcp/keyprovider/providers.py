@@ -21,6 +21,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _reject_flag_like(value: str, label: str) -> None:
+    """Guard against config values a target CLI could misparse as an option.
+
+    subprocess.run with a fixed argv list has no shell injection surface, but
+    a config-controlled value starting with '-' can still be read as a flag
+    by the target CLI's own argument parser instead of the positional data it
+    was meant to be. Reject that shape rather than pass it through.
+    """
+    if value.startswith("-"):
+        raise KeyProviderError(f"{label} must not start with '-': {value!r}")
+
+
 @register
 class EnvKeyProvider(KeyProvider):
     """Default: the key already loaded from the environment / .env file.
@@ -74,6 +86,8 @@ class KeychainKeyProvider(KeyProvider):
     def resolve(self, settings: Settings, *, prompt: bool = True) -> str:
         service = settings.key_ref or "jeli-chain-key"
         account = settings.chain_key_id
+        _reject_flag_like(service, "SCOPED_MCP_KEY_REF")
+        _reject_flag_like(account, "chain key id")
         try:
             import keyring
 
@@ -86,7 +100,7 @@ class KeychainKeyProvider(KeyProvider):
         except ImportError:
             pass  # fall back to the macOS CLI
         try:
-            out = subprocess.run(  # nosec B603 B607 — fixed argv, no shell
+            out = subprocess.run(  # nosec B603 B607 — shell=False, fixed argv; service/account validated above
                 ["security", "find-generic-password", "-s", service, "-a", account, "-w"],
                 capture_output=True,
                 text=True,
@@ -119,7 +133,7 @@ class OnePasswordKeyProvider(KeyProvider):
                 "key provider '1password' needs SCOPED_MCP_KEY_REF = op://vault/item/field"
             )
         try:
-            out = subprocess.run(  # nosec B603 B607 — fixed argv, no shell
+            out = subprocess.run(  # nosec B603 B607 — shell=False, fixed argv; ref is checked to start with "op://" above, so it can't be misread as a flag
                 ["op", "read", ref],
                 capture_output=True,
                 text=True,
@@ -160,8 +174,10 @@ class OpenBAOKeyProvider(KeyProvider):
             )
         path, _, field = ref.partition("#")
         field = field or "value"
+        _reject_flag_like(path, "SCOPED_MCP_KEY_REF path")
+        _reject_flag_like(field, "SCOPED_MCP_KEY_REF field")
         try:
-            out = subprocess.run(  # nosec B603 B607 — fixed argv, no shell
+            out = subprocess.run(  # nosec B603 B607 — shell=False, fixed argv; path/field validated above
                 ["bao", "kv", "get", "-field", field, path],
                 capture_output=True,
                 text=True,
@@ -201,7 +217,7 @@ class OpenBAOKeyProvider(KeyProvider):
 
         for check_path in paths_to_check:
             try:
-                out = subprocess.run(  # nosec B603 B607 — fixed argv, no shell
+                out = subprocess.run(  # nosec B603 B607 — shell=False, fixed argv; check_path derives from an already-validated path
                     ["bao", "token", "capabilities", check_path],
                     capture_output=True,
                     text=True,
@@ -219,7 +235,9 @@ class OpenBAOKeyProvider(KeyProvider):
                     return
                 write_caps = caps & {"create", "update", "delete"}
                 if write_caps:
-                    logger.warning(
+                    # only capability names (e.g. "create,update") and the KV path are
+                    # logged below — never the token value itself
+                    logger.warning(  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
                         "OpenBAO token has write access (%s) to chain key path %r — "
                         "anyone holding this token can replace the key and forge records; "
                         "provision a read-only token for Jeli (see docs/key-management.md)",
@@ -227,7 +245,7 @@ class OpenBAOKeyProvider(KeyProvider):
                         path,
                     )
                     return
-            except Exception:  # noqa: BLE001 — capability check is best-effort
+            except Exception:  # nosec B110  # noqa: BLE001 — capability check is best-effort
                 pass
 
 
