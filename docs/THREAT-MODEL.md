@@ -50,5 +50,25 @@ are not yet hash-chained; an admin-level attacker can delete them silently.
 
 **Search results are a prompt-injection channel.** `search_memory` returns
 memory content into an agent's context. Consumers MUST treat results as
-untrusted data, not instructions — the `injection_flagged` field exists so
+untrusted data, not instructions. The `injection_flagged` field exists so
 callers can quarantine, but unflagged content is not certified safe.
+
+## Red-team findings (2026-07-07) — remediated
+
+An adversarial audit of the v0.2.0-alpha poisoning defenses confirmed all
+three read/write defenses are correctly coded but were **surface-specific**:
+other read and write paths did not inherit them. All findings are now fixed;
+read-time defenses are applied through a single `apply_read_defenses` /
+`wrap_for_read` choke point that every read surface calls.
+
+| Issue | Severity | Gap | Status |
+|---|---|---|---|
+| #35 | HIGH | Caller metadata not whitelisted; an agent could set `content_class=security-doc` + fake `trust_override_reason` to downgrade the quarantine wrap, or forge `insight_type`/`is_session_summary` to impersonate daemon output | FIXED: `SERVER_OWNED_METADATA_KEYS` stripped at the MCP boundary |
+| #36 | HIGH | `search_by_entity` returned content raw, with no read-time wrap and no trust decay | FIXED: routed through `apply_read_defenses` |
+| #37 | HIGH | Importer applied no trust ceiling and passed metadata through; a crafted archive could launder trust to 1.0, spoof security-doc, and weaponize the resolver | MITIGATED: import trust ceiling (default 0.3) + metadata strip + user-tier tie escalation guard. Crypto source-verification is the tracked long-term fix |
+| #38 | MEDIUM | Safety-aware re-ranking ran only on `rerank=true` semantic calls | FIXED: unconditional on semantic; flag demotion added to fts ordering |
+| #39 | MEDIUM | Synthesized cluster insights stored unwrapped | FIXED: `<jeli:derived>` wrap when `source_trust_min` < floor |
+| #40 | LOW | `audit_trail` returned content unwrapped and omitted `injection_flagged` | FIXED: flag surfaced; flagged content wrapped |
+
+The root lesson, now applied: read-time defenses live at a single choke point
+(`apply_read_defenses`), not re-implemented per surface.

@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     chain_key: str = Field(default="")
     chain_key_id: str = Field(default="k1")
 
+    # Pluggable chain-key sourcing (see keyprovider/). Default "env" keeps the
+    # historical behaviour (key read from SCOPED_MCP_CHAIN_KEY). Other providers:
+    # "file", "keychain", "1password", "passphrase". key_ref is the
+    # provider-specific locator (a file path, a keychain service, an op:// ref,
+    # or a hex salt for the passphrase KDF).
+    key_provider: str = Field(default="env")
+    key_ref: str = Field(default="")
+
     # Identity stamped on every write/audit row; server-side so agents
     # cannot impersonate another writer.
     agent_actor: str = Field(default="unknown-agent")

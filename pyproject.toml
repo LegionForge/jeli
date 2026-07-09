@@ -59,6 +59,16 @@ mlx = [
     "sentence-transformers>=3.0.0",
     "torch>=2.3.0",
 ]
+llm = [
+    # LLM second-pass injection classifier (GH #33). Opt-in: the classifier is
+    # only active when a model is configured, so this stays out of core deps.
+    "litellm>=1.40.0",
+]
+keychain = [
+    # OS keychain chain-key provider (SCOPED_MCP_KEY_PROVIDER=keychain).
+    # Optional: the provider falls back to the macOS `security` CLI without it.
+    "keyring>=24.0.0",
+]
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
@@ -84,6 +94,8 @@ target-version = ["py311"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
 select = [
     "E",    # pycodestyle errors
     "W",    # pycodestyle warnings

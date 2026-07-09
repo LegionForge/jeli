@@ -1,0 +1,67 @@
+{
+  "$schema": "https://aka.ms/codetour-schema",
+  "title": "3: Integrity: Hash Chain, State Events, Verify",
+  "description": "How Jeli makes silent corruption impossible to hide: canonical hashing, append-only state changes, chain verification, and portable sovereignty.",
+  "steps": [
+    {
+      "file": "src/jeli_scoped_mcp/core/hash_chain.py",
+      "pattern": "def canonical_json\\(obj: dict\\)",
+      "title": "Canonical form first",
+      "description": "Hashing starts with a deterministic serialization: sorted keys, fixed separators, no whitespace drift. Two semantically identical records always hash identically, so verification failures mean *content changed*, never \"the JSON serializer had a mood\"."
+    },
+    {
+      "file": "src/jeli_scoped_mcp/core/hash_chain.py",
+      "pattern": "def build_canonical_record\\(",
+      "title": "What the hash covers",
+      "description": "Content, embedding model + dimensions, trust score, memory type, signing key id, and metadata: everything that matters is inside the HMAC. Change any of it in the database and the record stops verifying. (The live integration suite proves this: direct column UPDATEs are caught.)"
+    },
+    {
+      "file": "src/jeli_scoped_mcp/core/hash_chain.py",
+      "pattern": "def validate_chain\\(",
+      "title": "Walking the chain",
+      "description": "Verification walks oldest-first in `chain_seq` order, recomputing each HMAC under the record's own `key_id` and checking each `prev_hash` link. It reports the *first* out-of-sync record, because after one break, everything downstream is suspect, so pinpointing the break is the useful answer. (`chain_seq` exists because `created_at` is transaction-start time and ties under concurrency, a real bug CI's live-Postgres job caught.)"
+    },
+    {
+      "file": "src/jeli_scoped_mcp/core/trust_score.py",
+      "pattern": "class TrustScorer",
+      "title": "Trust decays at read time, never in storage",
+      "description": "Effective trust = stored trust decayed by age with type-specific half-lives (identity barely decays; transient decays fast). The decay is computed on read; stored values are never rewritten, because rewriting them would mean rewriting hashed records. `jeli decay-report` shows what has drifted."
+    },
+    {
+      "file": "src/jeli_scoped_mcp/tools/state_tools.py",
+      "pattern": "async def invalidate\\(self, memory_id: str, reason: str, actor: str\\)",
+      "title": "Facts never delete",
+      "description": "Invalidation, revision, and redaction are *chained state events*: appends to a second hash chain, each carrying reason and actor. A revision points to what it supersedes; the original stays valid-until-superseded. History is complete by construction."
+    },
+    {
+      "file": "src/jeli_scoped_mcp/tools/state_tools.py",
+      "pattern": "async def redact\\(self, memory_id: str, reason: str, actor: str\\)",
+      "title": "Redaction without breaking the chain",
+      "description": "Redaction masks content at *read time*; the stored record and its hash stay intact, and a signed redaction event is appended. The chain still verifies end-to-end. (The first implementation zeroed content in place and broke its own chain; the state-event design replaced it.)"
+    },
+    {
+      "file": "src/jeli_scoped_mcp/cli.py",
+      "pattern": "async def _run_verify\\(settings: Settings\\)",
+      "title": "jeli verify",
+      "description": "The user-facing integrity check: walk the provenance log, recompute all hashes, flag breaks, identify the first out-of-sync record. `jeli verify --report` adds state-chain validity, cache consistency, and trust/queue statistics. One command answers \"can I still trust my memory?\""
+    },
+    {
+      "file": "src/jeli_scoped_mcp/portability/exporter.py",
+      "pattern": "class MemoryExporter",
+      "title": "Sovereignty means you can leave",
+      "description": "`jeli export` streams the store as JSON-Lines: every record with its metadata, provenance, and a per-record SHA-256, plus a manifest attesting whether the chain verified at export time. Raw vectors are deliberately excluded: embeddings are derived data, re-creatable locally, and excluding them keeps the archive model-agnostic."
+    },
+    {
+      "file": "src/jeli_scoped_mcp/portability/importer.py",
+      "pattern": "async def import_stream\\(",
+      "title": "Import with tamper detection",
+      "description": "Re-import verifies each record's SHA-256 before accepting it (`skipped_tampered` counts rejects), re-embeds locally, and chains everything into a *fresh* chain with import provenance stamped on. A backup edited in transit is caught line by line."
+    },
+    {
+      "file": "tests/integration/test_live_postgres.py",
+      "pattern": "async def test_column_tamper_without_event_is_detected\\(",
+      "title": "Proven against real Postgres",
+      "description": "The integrity claims are integration-tested against a live pgvector container, not just mocks: direct column tampering is detected, concurrent writers cannot fork the chain, double-retire is refused, and the append-only role grants hold (`test_role_privileges.py`). CI runs this suite on every push; locally: `JELI_TEST_DB_PORT=5599 bash scripts/run_integration_tests.sh`."
+    }
+  ]
+}

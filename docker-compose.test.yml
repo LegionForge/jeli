@@ -1,0 +1,15 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: jeli_test
+      POSTGRES_PASSWORD: jeli_test_password
+      POSTGRES_DB: jeli_test
+    ports:
+      # override with JELI_TEST_DB_PORT when 5433 is taken by another stack
+      - "${JELI_TEST_DB_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jeli_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

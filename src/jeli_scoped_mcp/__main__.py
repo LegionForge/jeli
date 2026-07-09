@@ -11,6 +11,13 @@ async def main():
     try:
         settings = get_settings()
 
+        # Resolve the chain key via the configured provider before the server
+        # touches it (default "env" is a no-op).
+        if settings.key_provider != "env":
+            from .keyprovider import resolve_chain_key
+
+            settings.chain_key = resolve_chain_key(settings)
+
         # Import server components
         from .database.pool import AsyncPostgresPool
         from .embedding.provider import EmbeddingProvider

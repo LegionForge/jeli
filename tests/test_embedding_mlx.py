@@ -1,9 +1,9 @@
 """Tests for MLXProvider — sentence-transformers mocked so no GPU required."""
 
 import sys
-import types
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 def _make_torch_mock(mps_available: bool = False) -> MagicMock:

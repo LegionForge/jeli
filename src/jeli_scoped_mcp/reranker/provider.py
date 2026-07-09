@@ -11,6 +11,36 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Safety-penalty constants for apply_safety_penalty (MemoryGraft defense,
+# arXiv 2512.16962 "constitutional consistency reranking", deterministic v1).
+# Relevance is weighted by trust so a poisoned-but-similar memory cannot
+# outrank a trusted one purely on embedding distance.
+_TRUST_WEIGHT_FLOOR = 0.5  # weight = floor + (1-floor) * effective_trust
+_FLAGGED_PENALTY = 0.3  # injection-flagged results keep 30% of their score
+
+
+def apply_safety_penalty(results: list[dict]) -> list[dict]:
+    """Demote low-trust and injection-flagged results in rerank ordering.
+
+    MemoryGraft-class attacks win by making poisoned entries *similar* to the
+    query so retrieval surfaces them above legitimate memories. Pure relevance
+    ordering (vector distance or LLM judgment) is blind to provenance; this
+    pass multiplies relevance by a trust-derived weight and slashes flagged
+    entries, so provenance participates in ranking. Deterministic — no LLM
+    call; an LLM entailment check against constitutional rules can layer on
+    later without changing this contract.
+    """
+    for c in results:
+        base = c.get("relevance_score")
+        if base is None:
+            base = round(1.0 - c.get("distance", 0.5), 4)
+        trust = float(c.get("effective_trust", c.get("trust_score", 0.5)))
+        weight = _TRUST_WEIGHT_FLOOR + (1.0 - _TRUST_WEIGHT_FLOOR) * trust
+        if c.get("injection_flagged"):
+            weight *= _FLAGGED_PENALTY
+        c["relevance_score"] = round(base * weight, 4)
+    return sorted(results, key=lambda x: x["relevance_score"], reverse=True)
+
 
 class RerankerProvider(ABC):
     @abstractmethod

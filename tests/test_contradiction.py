@@ -234,3 +234,48 @@ class TestContradictionClassifier:
         assert flag.conflicting_memory_id == "mem-2"
         assert flag.severity == ContradictionSeverity.HIGH
         assert flag.confidence == 0.9
+
+
+# ── Uncovered branches ────────────────────────────────────────────────────────
+
+
+class TestUncoveredBranches:
+    def test_semantic_similarity_empty_text_returns_zero(self):
+        # Both empty → no words → Jaccard returns 0.0 (line 174 branch)
+        assert ContradictionDetector.detect_semantic_similarity("", "") == 0.0
+
+    def test_semantic_similarity_one_empty_returns_zero(self):
+        assert ContradictionDetector.detect_semantic_similarity("hello world", "") == 0.0
+
+    def test_classify_low_trust_direct_contradiction_medium_severity(self):
+        """When trusts are low (≤0.8), direct contradiction is flagged as MEDIUM not HIGH."""
+        old = {
+            "id": "o1",
+            "content": "I prefer coffee",
+            "trust_score": 0.5,  # low trust
+            "memory_type": "preference",
+        }
+        new = {
+            "id": "n1",
+            "content": "I hate coffee",
+            "trust_score": 0.5,  # low trust
+            "memory_type": "preference",
+        }
+        flags = ContradictionClassifier.classify(old, new, similarity_score=0.6)
+        direct_flags = [f for f in flags if f.contradiction_type == ContradictionType.DIRECT]
+        assert any(f.severity == ContradictionSeverity.MEDIUM for f in direct_flags)
+
+    def test_are_direct_contradictions_string_values_in_affinity(self):
+        """Defensive else branch: affinity dict with plain strings (single-group match)."""
+        # Simulate what re.findall produces with a single-group pattern — a list of strings.
+        affinity1 = {"prefer": ["coffee"], "dislike": []}
+        affinity2 = {"prefer": [], "dislike": ["coffee"]}
+        is_contra, reason = ContradictionDetector.are_direct_contradictions(affinity1, affinity2)
+        assert is_contra is True
+        assert "coffee" in reason.lower()
+
+    def test_are_direct_contradictions_no_match_strings(self):
+        affinity1 = {"prefer": ["tea"], "dislike": []}
+        affinity2 = {"prefer": [], "dislike": ["coffee"]}
+        is_contra, _ = ContradictionDetector.are_direct_contradictions(affinity1, affinity2)
+        assert is_contra is False

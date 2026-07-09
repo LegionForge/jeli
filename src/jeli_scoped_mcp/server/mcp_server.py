@@ -27,9 +27,15 @@ from typing import Any
 from ..config import Settings
 from ..database.pool import AsyncPostgresPool
 from ..embedding.provider import EmbeddingProvider
+from ..graph import GraphStore
 from ..reranker.provider import RerankerProvider
 from ..security import VALID_CONTENT_CLASSES
-from ..tools.memory_tools import MemoryToolError, MemoryTools
+from ..tools.memory_tools import (
+    SERVER_OWNED_METADATA_KEYS,
+    MemoryToolError,
+    MemoryTools,
+    apply_read_defenses,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +180,34 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["content"],
         },
     },
+    {
+        "name": "search_by_entity",
+        "description": (
+            "Read-only search for memories that mention a named entity "
+            "(fuzzy match on the entity's name or aliases). Returns "
+            "search_memory-shaped rows."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_name": {"type": "string"},
+                "limit": {"type": "integer", "default": 10},
+            },
+            "required": ["entity_name"],
+        },
+    },
+    {
+        "name": "get_entity_graph",
+        "description": (
+            "Read-only view of one entity: its relations (both directions) "
+            "and the number of memories linked to it."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"entity_name": {"type": "string"}},
+            "required": ["entity_name"],
+        },
+    },
 ]
 
 
@@ -202,6 +236,7 @@ class ScopedMCPServer:
             key_id=settings.chain_key_id,
             reranker=self.reranker,
         )
+        self.graph = GraphStore()
 
     def _clamp_trust(self, declared: float) -> tuple[float, bool]:
         """Apply the server-side agent trust ceiling (GH #14).
@@ -230,13 +265,49 @@ class ScopedMCPServer:
             )
         return str(content_class)
 
+    @staticmethod
+    def _infer_content_class(
+        content: str, declared_class: str, source_agent: str | None
+    ) -> str:
+        """Server-side stigmatisation of externally-sourced content.
+
+        Agents self-declare content_class, so a poisoned agent could label web
+        content as 'general' to dodge quarantine wrapping. When an agent (not the
+        CLI) writes default-class content that looks web-sourced — a URL, or a
+        phrase like 'according to' / 'from the web' — upgrade it to
+        'external-untrusted' regardless of what the agent claimed.
+        """
+        if source_agent is None or declared_class != "general":
+            return declared_class
+        lowered = content.lower()
+        has_url = re.search(r"https?://", content, re.IGNORECASE) is not None
+        has_phrase = any(p in lowered for p in ("according to", "from the web"))
+        if has_url or has_phrase:
+            return "external-untrusted"
+        return declared_class
+
     async def dispatch(self, name: str, arguments: dict) -> dict | list:
         """Route one tool call to MemoryTools with the server-side actor."""
         actor = self.settings.agent_actor
         if name == "capture_memory":
             content_class = self._resolve_content_class(arguments)
+            content_class = self._infer_content_class(
+                arguments["content"], content_class, actor
+            )
             trust, clamped = self._clamp_trust(arguments["trust_score"])
             metadata = dict(arguments.get("metadata") or {})
+            # Strip server-owned provenance/security keys an agent must not set
+            # (GH #35): forging them impersonates daemon output or downgrades the
+            # injection wrap. Internal callers bypass this by using MemoryTools.
+            stripped = [k for k in metadata if k in SERVER_OWNED_METADATA_KEYS]
+            for k in stripped:
+                del metadata[k]
+            if stripped:
+                logger.warning(
+                    "capture_memory: stripped server-owned metadata keys from "
+                    "agent input: %s",
+                    stripped,
+                )
             if clamped:
                 metadata["declared_trust"] = float(arguments["trust_score"])
                 metadata["trust_clamped_to"] = trust
@@ -272,6 +343,30 @@ class ScopedMCPServer:
             )
         if name == "audit_trail":
             return await self.tools.audit_trail(memory_id=arguments["memory_id"], actor=actor)
+        if name == "search_by_entity":
+            # Apply constitutional ReadGate so entity searches respect the same
+            # sovereignty rules as search_memory (exclude_memory_type,
+            # min_trust_floor, exclude_content_class, etc.).
+            from ..constitutional.gate import ReadGate
+            from ..constitutional.manager import ConstitutionalManager
+
+            entity_results = await self.graph.search_by_entity(
+                self.db,
+                entity_name=arguments["entity_name"],
+                limit=arguments.get("limit", 10),
+            )
+            # Same read-time defenses as search_memory (GH #36): decay + wrap
+            # flagged / low-trust-procedural / derived content. Was previously
+            # missing here, so the entity surface returned raw, non-decayed rows.
+            apply_read_defenses(entity_results)
+            active_rules = await ConstitutionalManager().load_active_rules(self.db)
+            if active_rules:
+                entity_results = ReadGate().apply(entity_results, actor=actor, rules=active_rules)
+            return entity_results
+        if name == "get_entity_graph":
+            return await self.graph.get_entity_graph(
+                self.db, entity_name=arguments["entity_name"]
+            )
         if name == "summarize_session":
             # Same gate as any other agent write: inbox when enabled, agent-tier
             # trust always. The old path stored summaries at 0.9 directly on the

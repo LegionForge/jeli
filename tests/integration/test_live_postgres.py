@@ -293,3 +293,68 @@ async def test_search_scoping_filters(live_tools):
         query="scoped deployment", actor="itest", mode="semantic", project="briarios"
     )
     assert [h["content"] for h in hits] == ["briarios scoped deployment note"]
+
+
+# ── judicial precedent case-law semantics (real upsert SQL) ───────────────────
+
+
+@pytest.fixture
+async def live_db():
+    db = AsyncPostgresPool(DB_URL, min_size=1, max_size=4)
+    await db.connect()
+    await db.execute("TRUNCATE judicial_precedent CASCADE")
+    yield db
+    await db.close()
+
+
+async def test_precedent_agreement_reinforces(live_db):
+    """Repeat deliberations that agree grow count and confidence."""
+    from jeli_scoped_mcp.judicial.precedent import PrecedentStore
+
+    store = PrecedentStore()
+    phash = store.pattern_hash("direct", "preference", "identity")
+
+    first = await store.record(live_db, phash, "direct", "trust_wins", "higher trust")
+    assert first.confidence == pytest.approx(0.5)
+    assert first.applied_count == 1
+
+    second = await store.record(live_db, phash, "direct", "trust_wins", "higher trust")
+    assert second.confidence == pytest.approx(0.6)
+    assert second.applied_count == 2
+    assert second.resolution == "trust_wins"
+
+
+async def test_precedent_dissent_erodes_but_stands(live_db):
+    """A disagreeing deliberation lowers confidence; the resolution is kept."""
+    from jeli_scoped_mcp.judicial.precedent import PrecedentStore
+
+    store = PrecedentStore()
+    phash = store.pattern_hash("direct", "semantic", "episodic")
+
+    await store.record(live_db, phash, "direct", "trust_wins", "higher trust")
+    dissent = await store.record(live_db, phash, "direct", "newer_wins", "newer prevails")
+
+    assert dissent.resolution == "trust_wins"  # settled law stands
+    assert dissent.winner_rule == "higher trust"
+    assert dissent.confidence == pytest.approx(0.4)  # eroded by one step
+    assert dissent.applied_count == 1  # dissent is not an application
+
+
+async def test_precedent_sustained_dissent_overturns(live_db):
+    """Erosion below OVERTURN_FLOOR flips the precedent to the new resolution."""
+    from jeli_scoped_mcp.judicial.precedent import PrecedentStore
+
+    store = PrecedentStore()
+    phash = store.pattern_hash("direct", "procedural", "transient")
+
+    await store.record(live_db, phash, "direct", "trust_wins", "higher trust")   # 0.5
+    await store.record(live_db, phash, "direct", "newer_wins", "newer prevails")  # 0.4
+    await store.record(live_db, phash, "direct", "newer_wins", "newer prevails")  # 0.3
+    flipped = await store.record(
+        live_db, phash, "direct", "newer_wins", "newer prevails"
+    )  # 0.3 - 0.1 < floor → overturn
+
+    assert flipped.resolution == "newer_wins"
+    assert flipped.winner_rule == "newer prevails"
+    assert flipped.confidence == pytest.approx(0.5)  # fresh base
+    assert flipped.applied_count == 1  # case law restarts
