@@ -315,6 +315,82 @@ def _mem(id, trust, mtype="preference"):
     return {"id": id, "trust_score": trust, "memory_type": mtype, "content": "x"}
 
 
+def _precedent(resolution, confidence, **kw):
+    defaults = {
+        "id": "p1",
+        "contradiction_type": "direct",
+        "pattern_hash": "ph",
+        "winner_rule": "rule",
+        "applied_count": 1,
+    }
+    defaults.update(kw)
+    return JudicialPrecedent(resolution=resolution, confidence=confidence, **defaults)
+
+
+@pytest.mark.asyncio
+async def test_overturn_escalates_to_human_queue():
+    """A precedent flip is surfaced for HITL review, not silently applied.
+
+    Overturn-vs-corroboration-ledger policy is deliberately unsettled
+    (JP, 2026-07-10) — every flip goes to judicial_human_queue.
+    """
+    db = _db()
+    resolver = _resolver(db)
+    store = MagicMock()
+    store.pattern_hash = MagicMock(return_value="ph")
+    # standing law says newer_wins at eroded confidence; this deliberation
+    # derives trust_wins (0.9 vs 0.5) and the record() upsert overturns.
+    store.lookup = AsyncMock(return_value=_precedent("newer_wins", 0.35))
+    store.record = AsyncMock(return_value=_precedent("trust_wins", 0.5))
+    store.reinforce = AsyncMock()
+
+    with patch(
+        "src.jeli_scoped_mcp.judicial.precedent.PrecedentStore", return_value=store
+    ), patch(
+        "src.jeli_scoped_mcp.judicial.escalation.HumanEscalationQueue"
+    ) as MockQueue, patch(
+        "src.jeli_scoped_mcp.tools.memory_tools.MemoryTools"
+    ), patch("src.jeli_scoped_mcp.tools.state_tools.StateTools") as MockState:
+        MockQueue.return_value.enqueue = AsyncMock()
+        MockState.return_value.invalidate = AsyncMock()
+        await resolver._resolve_high(
+            _mem("new", 0.9, "preference"), _mem("old", 0.5, "identity"), "reason", "direct"
+        )
+
+    MockQueue.return_value.enqueue.assert_awaited_once()
+    enqueue_kwargs = MockQueue.return_value.enqueue.await_args.kwargs
+    assert "OVERTURNED" in enqueue_kwargs["reason"]
+    assert enqueue_kwargs["severity"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_non_overturning_dissent_does_not_escalate():
+    """Dissent that erodes but keeps standing law is business as usual."""
+    db = _db()
+    resolver = _resolver(db)
+    store = MagicMock()
+    store.pattern_hash = MagicMock(return_value="ph")
+    # standing law survives the dissent: record() returns the same resolution.
+    store.lookup = AsyncMock(return_value=_precedent("newer_wins", 0.6))
+    store.record = AsyncMock(return_value=_precedent("newer_wins", 0.5))
+    store.reinforce = AsyncMock()
+
+    with patch(
+        "src.jeli_scoped_mcp.judicial.precedent.PrecedentStore", return_value=store
+    ), patch(
+        "src.jeli_scoped_mcp.judicial.escalation.HumanEscalationQueue"
+    ) as MockQueue, patch(
+        "src.jeli_scoped_mcp.tools.memory_tools.MemoryTools"
+    ), patch("src.jeli_scoped_mcp.tools.state_tools.StateTools") as MockState:
+        MockQueue.return_value.enqueue = AsyncMock()
+        MockState.return_value.invalidate = AsyncMock()
+        await resolver._resolve_high(
+            _mem("new", 0.9, "preference"), _mem("old", 0.5, "identity"), "reason", "direct"
+        )
+
+    MockQueue.return_value.enqueue.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_high_confidence_precedent_applied():
     db = _db()
