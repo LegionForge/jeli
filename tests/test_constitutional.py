@@ -488,6 +488,94 @@ async def test_add_rule_rejects_empty_description():
         )
 
 
+@pytest.mark.parametrize(
+    "rule_type, bad_params",
+    [
+        ("exclude_memory_type", {}),
+        ("exclude_memory_type", {"memoryType": "transient"}),  # camelCase typo
+        ("min_trust_floor", {}),
+        ("min_trust_floor", {"flor": 0.6}),  # misspelled key
+        ("exclude_tag", {}),
+        ("exclude_content_class", {}),
+        ("exclude_content_class", {"contentclass": "medical"}),  # missing underscore
+        ("max_results", {}),
+        ("deny_write_memory_type", {}),
+        ("max_trust_for_content_class", {"content_class": "external"}),  # missing max_trust
+        ("max_trust_for_content_class", {"max_trust": 0.3}),  # missing content_class
+    ],
+)
+async def test_add_rule_rejects_missing_required_param(rule_type, bad_params):
+    """A rule missing its required parameter fails loud at creation (GH #54),
+    instead of signing a rule that silently enforces nothing."""
+    pool = FakePool()
+    mgr = ConstitutionalManager()
+    with pytest.raises(ConstitutionalError, match="require|must be"):
+        await mgr.add_rule(
+            pool,
+            chain_key=CHAIN_KEY,
+            key_id="k1",
+            rule_type=rule_type,
+            parameters=bad_params,
+            description="intended constraint that would be vacuous",
+        )
+
+
+@pytest.mark.parametrize(
+    "rule_type, bad_params",
+    [
+        ("min_trust_floor", {"floor": 1.5}),  # out of [0,1]
+        ("min_trust_floor", {"floor": "high"}),  # non-numeric
+        ("min_trust_floor", {"floor": True}),  # bool is not a valid float here
+        ("max_trust_for_content_class", {"content_class": "external", "max_trust": -0.1}),
+        ("max_results", {"max_results": -1}),  # negative
+        ("max_results", {"max_results": "ten"}),  # non-numeric
+    ],
+)
+async def test_add_rule_rejects_out_of_range_or_nonnumeric_param(rule_type, bad_params):
+    """Numeric params must parse and sit in range, so enforcement neither
+    silently defaults nor blows up (GH #54)."""
+    pool = FakePool()
+    mgr = ConstitutionalManager()
+    with pytest.raises(ConstitutionalError, match="must be"):
+        await mgr.add_rule(
+            pool,
+            chain_key=CHAIN_KEY,
+            key_id="k1",
+            rule_type=rule_type,
+            parameters=bad_params,
+            description="numeric constraint",
+        )
+
+
+@pytest.mark.parametrize(
+    "rule_type, good_params",
+    [
+        ("exclude_memory_type", {"memory_type": "transient"}),
+        ("min_trust_floor", {"floor": 0.6}),
+        ("min_trust_floor", {"floor": 0}),  # int endpoint ok
+        ("exclude_tag", {"tag": "secret"}),
+        ("exclude_content_class", {"content_class": "medical"}),
+        ("max_results", {"max_results": 5}),
+        ("deny_write_memory_type", {"memory_type": "identity"}),
+        ("max_trust_for_content_class", {"content_class": "external", "max_trust": 0.3}),
+    ],
+)
+async def test_add_rule_accepts_valid_params(rule_type, good_params):
+    """Well-formed rules of every type still add cleanly (no false rejections)."""
+    pool = FakePool()
+    mgr = ConstitutionalManager()
+    result = await mgr.add_rule(
+        pool,
+        chain_key=CHAIN_KEY,
+        key_id="k1",
+        rule_type=rule_type,
+        parameters=good_params,
+        description="valid constraint",
+    )
+    assert result["rule_type"] == rule_type
+    assert "rule_hash" in result
+
+
 async def test_add_rule_raises_when_fetchrow_returns_none():
     """insert failed → fetchrow returns None → ConstitutionalError."""
     class NullInsertPool(FakePool):

@@ -24,6 +24,54 @@ class ConstitutionalError(Exception):
     """Raised for invalid rule input; message is safe to surface to the user."""
 
 
+def validate_rule_parameters(rule_type: str, parameters: dict) -> None:
+    """Ensure a rule carries the parameter its gate needs to enforce (GH #54).
+
+    The Read/Write gates read parameters with `.get(key, <default>)` and fail
+    open on an absent key, so a rule with a missing or misspelled parameter
+    signs and stores fine yet enforces nothing — a signed, active-looking rule
+    that silently does nothing. Validate at creation so the typo fails loud
+    here instead of becoming an invisible sovereignty hole. Enforcement and
+    stored rules are untouched; this only guards the add path.
+    """
+
+    def _require(key: str) -> None:
+        if key not in parameters:
+            raise ConstitutionalError(
+                f"rule_type '{rule_type}' requires parameter '{key}'"
+            )
+
+    def _require_unit_float(key: str) -> None:
+        _require(key)
+        v = parameters[key]
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0.0 <= v <= 1.0:
+            raise ConstitutionalError(
+                f"parameter '{key}' must be a number between 0.0 and 1.0"
+            )
+
+    def _require_nonneg_number(key: str) -> None:
+        _require(key)
+        v = parameters[key]
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0:
+            raise ConstitutionalError(f"parameter '{key}' must be a non-negative number")
+
+    if rule_type == RuleType.EXCLUDE_MEMORY_TYPE.value:
+        _require("memory_type")
+    elif rule_type == RuleType.MIN_TRUST_FLOOR.value:
+        _require_unit_float("floor")
+    elif rule_type == RuleType.EXCLUDE_TAG.value:
+        _require("tag")
+    elif rule_type == RuleType.EXCLUDE_CONTENT_CLASS.value:
+        _require("content_class")
+    elif rule_type == RuleType.MAX_RESULTS.value:
+        _require_nonneg_number("max_results")
+    elif rule_type == RuleType.DENY_WRITE_MEMORY_TYPE.value:
+        _require("memory_type")
+    elif rule_type == RuleType.MAX_TRUST_FOR_CONTENT_CLASS.value:
+        _require("content_class")
+        _require_unit_float("max_trust")
+
+
 class ConstitutionalManager:
     """CRUD-lite over the constitutional_rules table.
 
@@ -56,6 +104,8 @@ class ConstitutionalManager:
             raise ConstitutionalError("parameters must be a JSON object")
         if not description or not description.strip():
             raise ConstitutionalError("description is required — a rule states user intent")
+        # A rule missing its parameter would sign fine and enforce nothing (GH #54).
+        validate_rule_parameters(rule_type, parameters)
 
         created_at = await db.fetchval("SELECT now()")
         rule_hash = sign_rule(
