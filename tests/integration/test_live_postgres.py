@@ -308,20 +308,35 @@ async def live_db():
 
 
 async def test_precedent_agreement_reinforces(live_db):
-    """Repeat deliberations that agree grow count and confidence."""
+    """Agreement grows count always; confidence only on a new distinct source.
+
+    Corroboration gate (GH #44): repeat agreement from the same source_key
+    counts toward applied_count but cannot compound confidence — only a
+    genuinely new source's first agreement bumps it.
+    """
     from jeli_scoped_mcp.judicial.precedent import PrecedentStore
 
     store = PrecedentStore()
     phash = store.pattern_hash("direct", "preference", "identity")
 
-    first = await store.record(live_db, phash, "direct", "trust_wins", "higher trust")
+    first = await store.record(
+        live_db, phash, "direct", "trust_wins", "higher trust", "agent-a"
+    )
     assert first.confidence == pytest.approx(0.5)
     assert first.applied_count == 1
 
-    second = await store.record(live_db, phash, "direct", "trust_wins", "higher trust")
-    assert second.confidence == pytest.approx(0.6)
-    assert second.applied_count == 2
-    assert second.resolution == "trust_wins"
+    same_source = await store.record(
+        live_db, phash, "direct", "trust_wins", "higher trust", "agent-a"
+    )
+    assert same_source.confidence == pytest.approx(0.5)  # gated: no compounding
+    assert same_source.applied_count == 2
+    assert same_source.resolution == "trust_wins"
+
+    new_source = await store.record(
+        live_db, phash, "direct", "trust_wins", "higher trust", "agent-b"
+    )
+    assert new_source.confidence == pytest.approx(0.6)  # distinct source bumps
+    assert new_source.applied_count == 3
 
 
 async def test_precedent_dissent_erodes_but_stands(live_db):

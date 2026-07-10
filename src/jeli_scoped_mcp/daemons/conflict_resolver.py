@@ -156,7 +156,7 @@ class ConflictResolverDaemon:
     async def _check_memory(self, memory_id: str) -> int:
         new_row = await self.db.fetchrow(
             """
-            SELECT id, content, trust_score, memory_type, created_at, embedding
+            SELECT id, content, trust_score, memory_type, created_at, embedding, source_agent
             FROM memory_entry WHERE id = $1
             """,
             memory_id,
@@ -172,7 +172,7 @@ class ConflictResolverDaemon:
 
         neighbors = await self.db.fetchall(
             """
-            SELECT id, content, trust_score, memory_type, created_at
+            SELECT id, content, trust_score, memory_type, created_at, source_agent
             FROM memory_entry
             WHERE valid_until IS NULL
               AND id != $1
@@ -190,6 +190,7 @@ class ConflictResolverDaemon:
             "content": new_row["content"],
             "trust_score": float(new_row["trust_score"]),
             "memory_type": new_row["memory_type"],
+            "source_agent": new_row["source_agent"],
         }
 
         for neighbor in neighbors:
@@ -198,6 +199,7 @@ class ConflictResolverDaemon:
                 "content": neighbor["content"],
                 "trust_score": float(neighbor["trust_score"]),
                 "memory_type": neighbor["memory_type"],
+                "source_agent": neighbor["source_agent"],
             }
             similarity = ContradictionDetector.detect_semantic_similarity(
                 old_mem["content"], new_mem["content"]
@@ -268,14 +270,48 @@ class ConflictResolverDaemon:
             )
             return
 
+        # Corroboration source for GH #44's Sybil gate: whichever memory's
+        # write triggered this deliberation is the "witness" being credited.
+        # Falls back to UNKNOWN_SOURCE if the memory has no declared agent.
+        from ..judicial.precedent import UNKNOWN_SOURCE
+
+        source_key = new_mem.get("source_agent") or UNKNOWN_SOURCE
+
         precedent = await store.lookup(self.db, phash)
         precedent_applied = precedent is not None and precedent.confidence >= 0.7
         if precedent_applied:
-            await store.reinforce(self.db, precedent.id)  # type: ignore[union-attr]
+            await store.reinforce(self.db, precedent.id, source_key)  # type: ignore[union-attr]
         else:
-            await store.record(
-                self.db, phash, contradiction_type, resolution, winner_rule
+            updated = await store.record(
+                self.db, phash, contradiction_type, resolution, winner_rule, source_key
             )
+            # An overturn is settled law flipping — rare, high-stakes, and its
+            # interaction with the corroboration ledger is deliberately not
+            # auto-resolved policy yet (JP, 2026-07-10): surface every overturn
+            # for human review alongside the auto-applied outcome.
+            if precedent is not None and updated.resolution != precedent.resolution:
+                from ..judicial.escalation import HumanEscalationQueue
+
+                await HumanEscalationQueue().enqueue(
+                    self.db,
+                    memory_id_a=str(new_mem["id"]),
+                    memory_id_b=str(old_mem["id"]),
+                    contradiction_type=contradiction_type,
+                    reason=(
+                        f"precedent OVERTURNED: '{precedent.resolution}' -> "
+                        f"'{updated.resolution}' (pattern {phash[:12]}, "
+                        f"source {source_key}); review the flip and its "
+                        f"corroboration history"
+                    ),
+                    severity="high",
+                )
+                logger.warning(
+                    "conflict resolver: precedent %s overturned (%s -> %s) — "
+                    "escalated for human review",
+                    phash[:12],
+                    precedent.resolution,
+                    updated.resolution,
+                )
 
         from ..tools.memory_tools import MemoryTools
         from ..tools.state_tools import StateTools
