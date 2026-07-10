@@ -1,5 +1,65 @@
 # Changelog
 
+## Unreleased
+
+Post-v0.2.0-alpha hardening: the OpenBAO signing-oracle key path made real,
+import trust made provenance-aware, and a run of security-critical DB-privilege
+and injection-detection fixes.
+
+### Added
+- **OpenBAO write-guard** (#42): warns at startup if the OpenBAO token can
+  write the chain key (checks KVv1 and KVv2 capability paths; flags root
+  tokens explicitly). Ships the required read-only policy HCL and token
+  creation command.
+- **HMAC-verified import trust** (#42, GH #41): `MemoryImporter` verifies
+  `record_hash` + `key_id` against the local chain key; own-store records
+  import at their original trust, unverified records stay clamped to the
+  import ceiling (GH #37 default-deny intact).
+- **Judicial precedent corroboration / Sybil gate** (#45, alembic 016):
+  precedent confidence grows only on *distinct* corroborating sources
+  (`source_agent`), not raw agreement count — repeat agreement from one actor
+  grows `applied_count` only. A single actor flooding one resolution stays
+  pinned at base confidence; crossing the apply threshold needs independent
+  sources. Every precedent *overturn* is now surfaced to the human-escalation
+  queue (the overturn-vs-corroboration-ledger policy is deliberately left to
+  human review pending real-world observation).
+
+### Fixed
+- **Non-env key providers were unusable at real startup** (#43): `get_settings()`
+  validated the chain key before `__main__` resolved it through the configured
+  provider, so any non-`env` provider (openbao, keychain, 1password, passphrase,
+  file) failed closed on an empty key. `scripts/run_mcp_stdio.sh` also only read
+  a file-based key; added a `JELI_KEY_PROVIDER=openbao` mode so the cutover
+  actually reaches the running MCP server.
+- **Column-grant gaps in the append-only privilege model** (#45, #49): a column
+  named in an `UPDATE ... SET` needs privilege even when its value doesn't
+  change (Postgres checks syntactically). Three statements referenced columns
+  the grants omitted and had been failing closed against the real `jeli_app`
+  role: judicial `record()` (since alembic 014 — `judicial_precedent` was empty
+  in production as a result; fixed in alembic 016), `jeli reembed`
+  (`embedding_model`/`dimensions`/`embedded_at`), and entity `record_relation()`
+  (`confidence`) — the last two fixed in alembic 017.
+- **Injection-regex false positives** (#46, GH #33): bare `bypass`/`override`/
+  `instead of`/mid-text `system:` fired on ordinary technical prose (bug
+  reports, changelogs, `compose.override.yaml`), producing false inbox holds.
+  `bypass`/`override` now require a nearby possessive aimed at the AI, `system:`
+  is anchored to the message start, and `instead of` is dropped. The inbox
+  worker also now attributes a hold to `regex_injection` vs `llm_classifier`
+  correctly instead of always labeling it the latter.
+
+### Security
+- **CLI flag-injection hardening** (#42): `_reject_flag_like` guards CLI
+  arguments; Bandit/Semgrep CI findings cleared.
+- LLM injection-classifier prompt tightened to distinguish text that *issues*
+  an instruction to an AI from text that merely *describes* one (#46).
+
+### Known / open
+- **Judicial precedent semantics** (#50, non-blocking): precedent is recorded
+  and reinforced but never actually applied to change a resolution, and a
+  precedent at/above the apply threshold (0.7) can never be overturned (the
+  erosion path is unreachable once settled). Both are pre-existing design
+  gaps awaiting a semantics ruling; documented, not yet changed.
+
 ## v0.2.0-alpha (2026-07-06)
 
 The three-branch governance model lands: a user-signed Constitutional layer,
