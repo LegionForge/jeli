@@ -13,6 +13,8 @@ import logging
 import time
 
 from ..database.pool import AsyncPostgresPool
+from ..security import VALID_CONTENT_CLASSES
+from ..tools.memory_tools import VALID_MEMORY_TYPES
 from .rules import ConstitutionalRule, RuleType, sign_rule
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,18 @@ def validate_rule_parameters(rule_type: str, parameters: dict) -> None:
                 f"rule_type '{rule_type}' requires parameter '{key}'"
             )
 
+    def _require_nonempty_string(key: str) -> str:
+        _require(key)
+        value = parameters[key]
+        if not isinstance(value, str) or not value.strip():
+            raise ConstitutionalError(f"parameter '{key}' must be a non-empty string")
+        return value
+
+    def _require_choice(key: str, choices: set[str] | frozenset[str]) -> None:
+        value = _require_nonempty_string(key)
+        if value not in choices:
+            raise ConstitutionalError(f"parameter '{key}' must be one of {sorted(choices)}")
+
     def _require_unit_float(key: str) -> None:
         _require(key)
         v = parameters[key]
@@ -49,26 +63,26 @@ def validate_rule_parameters(rule_type: str, parameters: dict) -> None:
                 f"parameter '{key}' must be a number between 0.0 and 1.0"
             )
 
-    def _require_nonneg_number(key: str) -> None:
+    def _require_nonneg_int(key: str) -> None:
         _require(key)
         v = parameters[key]
-        if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0:
-            raise ConstitutionalError(f"parameter '{key}' must be a non-negative number")
+        if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+            raise ConstitutionalError(f"parameter '{key}' must be a non-negative integer")
 
     if rule_type == RuleType.EXCLUDE_MEMORY_TYPE.value:
-        _require("memory_type")
+        _require_choice("memory_type", VALID_MEMORY_TYPES)
     elif rule_type == RuleType.MIN_TRUST_FLOOR.value:
         _require_unit_float("floor")
     elif rule_type == RuleType.EXCLUDE_TAG.value:
-        _require("tag")
+        _require_nonempty_string("tag")
     elif rule_type == RuleType.EXCLUDE_CONTENT_CLASS.value:
-        _require("content_class")
+        _require_choice("content_class", VALID_CONTENT_CLASSES)
     elif rule_type == RuleType.MAX_RESULTS.value:
-        _require_nonneg_number("max_results")
+        _require_nonneg_int("max_results")
     elif rule_type == RuleType.DENY_WRITE_MEMORY_TYPE.value:
-        _require("memory_type")
+        _require_choice("memory_type", VALID_MEMORY_TYPES)
     elif rule_type == RuleType.MAX_TRUST_FOR_CONTENT_CLASS.value:
-        _require("content_class")
+        _require_choice("content_class", VALID_CONTENT_CLASSES)
         _require_unit_float("max_trust")
 
 
