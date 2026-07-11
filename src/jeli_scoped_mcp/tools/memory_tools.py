@@ -438,7 +438,7 @@ class MemoryTools:
                     obj_id = entity_id_map.get(obj_name)
                     if subj_id and obj_id:
                         await self._graph_store.record_relation(
-                            self.db, subj_id, predicate, obj_id
+                            self.db, subj_id, predicate, obj_id, str(row["id"])
                         )
             except Exception:
                 logger.warning("entity extraction failed for %s", row["id"], exc_info=True)

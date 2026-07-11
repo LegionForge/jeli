@@ -298,8 +298,27 @@ def _server_with_graph(settings: Settings) -> ScopedMCPServer:
     server.db.fetchall = AsyncMock(return_value=[])  # ConstitutionalManager.load_active_rules
     server.graph = MagicMock()
     server.graph.search_by_entity = AsyncMock(return_value=[])
-    server.graph.get_entity_graph = AsyncMock(return_value={"nodes": [], "edges": []})
+    server.graph.memories_for_entity = AsyncMock(return_value=[])
+    server.graph.get_entity_graph = AsyncMock(
+        return_value={"entity": {"name": "Jeli"}, "relations": [], "memory_count": 1}
+    )
     return server
+
+
+def _graph_evidence(**overrides) -> dict:
+    row = {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "content": "Jeli uses PostgreSQL.",
+        "trust_score": 0.8,
+        "effective_trust": 0.8,
+        "memory_type": "semantic",
+        "content_class": "general",
+        "metadata": {},
+        "created_at": datetime.now(UTC).isoformat(),
+        "source": "test-agent",
+    }
+    row.update(overrides)
+    return row
 
 
 async def test_dispatch_search_by_entity_returns_results():
@@ -321,9 +340,81 @@ async def test_dispatch_search_by_entity_applies_readgate():
 
 async def test_dispatch_get_entity_graph():
     server = _server_with_graph(_settings())
+    evidence = _graph_evidence()
+    server.graph.memories_for_entity = AsyncMock(return_value=[evidence])
     result = await server.dispatch("get_entity_graph", {"entity_name": "Jeli"})
-    server.graph.get_entity_graph.assert_awaited_once()
-    assert "nodes" in result
+    server.graph.get_entity_graph.assert_awaited_once_with(
+        server.db,
+        entity_name="Jeli",
+        visible_memory_ids={evidence["id"]},
+    )
+    assert result["entity"]["name"] == "Jeli"
+
+
+async def test_dispatch_get_entity_graph_hides_quarantined_evidence():
+    server = _server_with_graph(_settings())
+    server.graph.memories_for_entity = AsyncMock(
+        return_value=[_graph_evidence(metadata={"injection_flagged": True})]
+    )
+
+    result = await server.dispatch("get_entity_graph", {"entity_name": "Jeli"})
+
+    assert result == {"entity": None, "relations": [], "memory_count": 0}
+    server.graph.get_entity_graph.assert_not_awaited()
+
+
+async def test_dispatch_get_entity_graph_applies_visibility_rules_and_relation_cap():
+    server = _server_with_graph(_settings())
+    visible = _graph_evidence()
+    excluded = _graph_evidence(
+        id="22222222-2222-2222-2222-222222222222",
+        content_class="security-doc",
+    )
+    server.graph.memories_for_entity = AsyncMock(return_value=[visible, excluded])
+    server.graph.get_entity_graph = AsyncMock(
+        return_value={
+            "entity": {"name": "Jeli"},
+            "relations": [{"predicate": "uses"}, {"predicate": "developed_by"}],
+            "memory_count": 1,
+        }
+    )
+    server.db.fetchall = AsyncMock(
+        return_value=[
+            {
+                "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                "rule_type": "exclude_content_class",
+                "parameters": {"content_class": "security-doc"},
+                "description": "hide security docs",
+                "applies_to": "all",
+                "active": True,
+                "created_at": datetime.now(UTC),
+                "revoked_at": None,
+                "rule_hash": "unused",
+                "key_id": "k1",
+            },
+            {
+                "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                "rule_type": "max_results",
+                "parameters": {"max_results": 1},
+                "description": "one graph relation",
+                "applies_to": "all",
+                "active": True,
+                "created_at": datetime.now(UTC),
+                "revoked_at": None,
+                "rule_hash": "unused",
+                "key_id": "k1",
+            },
+        ]
+    )
+
+    result = await server.dispatch("get_entity_graph", {"entity_name": "Jeli"})
+
+    server.graph.get_entity_graph.assert_awaited_once_with(
+        server.db,
+        entity_name="Jeli",
+        visible_memory_ids={visible["id"]},
+    )
+    assert result["relations"] == [{"predicate": "uses"}]
 
 
 async def test_search_by_entity_wraps_flagged_content():

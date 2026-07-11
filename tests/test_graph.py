@@ -211,10 +211,14 @@ class TestGraphStore:
         db = _mock_db()
         sid = str(uuid.uuid4())
         oid = str(uuid.uuid4())
-        await GraphStore().record_relation(db, sid, "works_on", oid)
-        sql = db.execute.call_args.args[0]
-        assert "evidence_count" in sql
-        assert "entity_relation" in sql
+        mid = str(uuid.uuid4())
+        await GraphStore().record_relation(db, sid, "works_on", oid, mid)
+        relation_sql = db.fetchval.call_args.args[0]
+        evidence_args = db.execute.call_args.args
+        assert "evidence_count" in relation_sql
+        assert "RETURNING id" in relation_sql
+        assert "entity_relation_evidence" in evidence_args[0]
+        assert mid in evidence_args
 
     @pytest.mark.asyncio
     async def test_search_by_entity_returns_memories(self):
@@ -249,6 +253,31 @@ class TestGraphStore:
         assert 50 in call_args
 
     @pytest.mark.asyncio
+    async def test_memories_for_entity_returns_gate_shaped_rows(self):
+        memory_id = uuid.uuid4()
+        db = MagicMock()
+        db.fetchall = AsyncMock(
+            return_value=[
+                {
+                    "id": memory_id,
+                    "content": "Jeli uses PostgreSQL.",
+                    "trust_score": 0.8,
+                    "memory_type": "semantic",
+                    "created_at": datetime.now(UTC),
+                    "created_by": "jp-cruz",
+                    "source_agent": None,
+                    "content_class": "general",
+                    "metadata": {},
+                }
+            ]
+        )
+        results = await GraphStore().memories_for_entity(db, "Jeli")
+        assert results[0]["id"] == str(memory_id)
+        assert results[0]["effective_trust"] == 0.8
+        assert results[0]["content_class"] == "general"
+        assert "valid_until IS NULL" in db.fetchall.call_args.args[0]
+
+    @pytest.mark.asyncio
     async def test_get_entity_graph_structure_when_found(self):
         entity_row = {
             "id": uuid.uuid4(),
@@ -277,6 +306,32 @@ class TestGraphStore:
         assert result["memory_count"] == 5
         assert len(result["relations"]) == 1
         assert result["relations"][0]["predicate"] == "works_on"
+        relation_call = db.fetchall.call_args
+        assert "entity_relation_evidence" in relation_call.args[0]
+        assert relation_call.args[2] is None
+
+    @pytest.mark.asyncio
+    async def test_get_entity_graph_restricts_queries_to_visible_memory_ids(self):
+        entity_id = uuid.uuid4()
+        visible_id = uuid.uuid4()
+        db = MagicMock()
+        db.fetchrow = AsyncMock(
+            return_value={
+                "id": entity_id,
+                "name": "Jeli",
+                "entity_type": "project",
+                "aliases": [],
+            }
+        )
+        db.fetchall = AsyncMock(return_value=[])
+        db.fetchval = AsyncMock(return_value=1)
+
+        await GraphStore().get_entity_graph(
+            db, "Jeli", visible_memory_ids={str(visible_id)}
+        )
+
+        assert db.fetchall.call_args.args[2] == [visible_id]
+        assert db.fetchval.call_args.args[2] == [visible_id]
 
     @pytest.mark.asyncio
     async def test_get_entity_graph_when_not_found(self):
@@ -407,10 +462,11 @@ class TestGraphCaptureIntegration:
 
         mock_graph.record_relation.assert_awaited()
         call = mock_graph.record_relation.call_args
-        # record_relation(db, subject_id, predicate, object_id)
+        # record_relation(db, subject_id, predicate, object_id, memory_id)
         assert call.args[2] == "works_on"
         assert call.args[1] == ids["JP Cruz"]
         assert call.args[3] == ids["Jeli"]
+        assert call.args[4] == str(fake_id)
 
     @pytest.mark.asyncio
     async def test_graph_failure_does_not_fail_capture(self):

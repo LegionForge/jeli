@@ -62,6 +62,18 @@ async def test_app_cannot_delete_chained_rows(db):
 
 
 @pytest.mark.asyncio
+async def test_relation_evidence_is_append_only_for_app(db):
+    with pytest.raises(Exception, match="permission denied"):
+        await _as_jeli_app(
+            db, "UPDATE entity_relation_evidence SET confidence = 0 WHERE false"
+        )
+    with pytest.raises(Exception, match="permission denied"):
+        await _as_jeli_app(db, "DELETE FROM entity_relation_evidence WHERE false")
+    # Agent-facing graph reads require SELECT on the evidence provenance.
+    await _as_jeli_app(db, "SELECT 1 FROM entity_relation_evidence LIMIT 0")
+
+
+@pytest.mark.asyncio
 async def test_app_column_scoped_temporal_updates_allowed(db):
     # Temporal cache columns are settable (authority is the state-event
     # chain; jeli verify cross-checks) — hashed fields stay frozen above.
