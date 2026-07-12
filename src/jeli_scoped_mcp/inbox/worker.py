@@ -34,6 +34,8 @@ class InboxWorker:
         poll_interval: float = POLL_INTERVAL_SECONDS,
         max_retries: int = MAX_RETRIES,
         llm_model: str | None = None,
+        llm_api_base: str | None = None,
+        llm_api_key: str = "",
     ):
         self.db = db
         self.classifier = classifier
@@ -43,6 +45,8 @@ class InboxWorker:
         self.poll_interval = poll_interval
         self.max_retries = max_retries
         self.llm_model = llm_model
+        self.llm_api_base = llm_api_base
+        self.llm_api_key = llm_api_key
 
     async def run_once(self) -> int:
         """Claim and process one batch. Returns items processed count."""
@@ -138,6 +142,8 @@ class InboxWorker:
                         source_trust=caller_trust,
                         content_class=content_class,
                         llm_model=self.llm_model,
+                        llm_api_base=self.llm_api_base,
+                        llm_api_key=self.llm_api_key,
                     )
                     if llm_flagged:
                         llm_held = True

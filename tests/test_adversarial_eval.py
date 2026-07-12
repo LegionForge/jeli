@@ -34,7 +34,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -633,6 +633,50 @@ class TestLLMInjectionClassifier:
         result = await InjectionDefense.llm_classify_injection(
             "I prefer dark roast coffee.", model="haiku"
         )
+        assert result is False
+
+    @pytest.mark.parametrize(
+        "verdict, expected",
+        [("YES", True), ("NO", False), ("YES — injection", True)],
+    )
+    async def test_llm_classifier_calls_configured_proxy(self, verdict, expected):
+        """Configured LiteLLM proxy works without the optional Python package."""
+        body = {"choices": [{"message": {"content": verdict}}]}
+        response = AsyncMock()
+        response.raise_for_status = MagicMock()
+        response.json = AsyncMock(return_value=body)
+        response.__aenter__ = AsyncMock(return_value=response)
+        response.__aexit__ = AsyncMock(return_value=False)
+        session = MagicMock()
+        session.post = MagicMock(return_value=response)
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession", return_value=session):
+            result = await InjectionDefense.llm_classify_injection(
+                self.EVASION,
+                model="omlx-chat",
+                api_base="http://proxy.test/v1/",
+                api_key="test-key",
+            )
+
+        assert result is expected
+        call = session.post.call_args
+        assert call.args[0] == "http://proxy.test/v1/chat/completions"
+        assert call.kwargs["headers"]["Authorization"] == "Bearer test-key"
+        assert call.kwargs["json"]["model"] == "omlx-chat"
+
+    async def test_llm_classifier_proxy_failure_fails_open(self):
+        session = MagicMock()
+        session.post = MagicMock(side_effect=RuntimeError("proxy unavailable"))
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=False)
+        with patch("aiohttp.ClientSession", return_value=session):
+            result = await InjectionDefense.llm_classify_injection(
+                self.EVASION,
+                model="omlx-chat",
+                api_base="http://proxy.test/v1",
+            )
         assert result is False
 
     async def test_sanitize_content_async_llm_catches_evasion(self, mock_litellm):

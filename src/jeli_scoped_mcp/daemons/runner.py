@@ -96,6 +96,8 @@ class DaemonRunner:
                 llm_model=(
                     self.settings.reranker_model if self.settings.litellm_base_url else None
                 ),
+                llm_api_base=self.settings.litellm_base_url or None,
+                llm_api_key=self.settings.litellm_api_key,
             )
             self._tasks.append(
                 asyncio.create_task(

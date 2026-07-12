@@ -353,9 +353,13 @@ async def test_runner_run_forever_creates_tasks_and_cancels():
     embedder = MagicMock()
     embedder.embed = AsyncMock(return_value=MagicMock())  # health check passes
 
+    settings = _settings()
+    settings.litellm_base_url = "http://proxy.test/v1"
+    settings.litellm_api_key = "test-key"
+    settings.reranker_model = "omlx-chat"
     runner = DaemonRunner(
         db=db, embedder=embedder,
-        memory_tools=_memory_tools(), settings=_settings(),
+        memory_tools=_memory_tools(), settings=settings,
         runner_id="test-forever",
     )
 
@@ -377,3 +381,7 @@ async def test_runner_run_forever_creates_tasks_and_cancels():
             pass
 
     assert task.done()
+    worker_kwargs = MockWorker.call_args.kwargs
+    assert worker_kwargs["llm_model"] == "omlx-chat"
+    assert worker_kwargs["llm_api_base"] == "http://proxy.test/v1"
+    assert worker_kwargs["llm_api_key"] == "test-key"
