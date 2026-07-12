@@ -392,7 +392,7 @@ async def test_non_overturning_dissent_does_not_escalate():
 
 
 @pytest.mark.asyncio
-async def test_high_confidence_precedent_applied():
+async def test_high_confidence_precedent_agreement_is_recorded():
     db = _db()
     resolver = _resolver(db)
     high = JudicialPrecedent(
@@ -408,7 +408,7 @@ async def test_high_confidence_precedent_applied():
     store.pattern_hash = MagicMock(return_value="ph")
     store.lookup = AsyncMock(return_value=high)
     store.reinforce = AsyncMock()
-    store.record = AsyncMock()
+    store.record = AsyncMock(return_value=_precedent("trust_wins", 1.0))
 
     with patch(
         "src.jeli_scoped_mcp.judicial.precedent.PrecedentStore", return_value=store
@@ -420,8 +420,8 @@ async def test_high_confidence_precedent_applied():
             _mem("new", 0.9, "preference"), _mem("old", 0.5, "identity"), "reason", "direct"
         )
 
-    store.reinforce.assert_awaited_once()
-    store.record.assert_not_awaited()
+    store.record.assert_awaited_once()
+    store.reinforce.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -455,6 +455,47 @@ async def test_low_confidence_rediscovers():
 
     store.record.assert_awaited_once()
     store.reinforce.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_high_confidence_precedent_dissent_reaches_erosion_path():
+    """Settled advisory law still receives contrary fresh deliberations."""
+    db = _db()
+    resolver = _resolver(db)
+    high = _precedent("newer_wins", 0.9)
+    eroded = _precedent("newer_wins", 0.8)
+    store = MagicMock()
+    store.pattern_hash = MagicMock(return_value="ph")
+    store.lookup = AsyncMock(return_value=high)
+    store.record = AsyncMock(return_value=eroded)
+    store.reinforce = AsyncMock()
+
+    with patch(
+        "src.jeli_scoped_mcp.judicial.precedent.PrecedentStore", return_value=store
+    ), patch(
+        "src.jeli_scoped_mcp.judicial.escalation.HumanEscalationQueue"
+    ) as MockQueue, patch(
+        "src.jeli_scoped_mcp.tools.memory_tools.MemoryTools"
+    ), patch("src.jeli_scoped_mcp.tools.state_tools.StateTools") as MockState:
+        MockQueue.return_value.enqueue = AsyncMock()
+        MockState.return_value.invalidate = AsyncMock()
+        await resolver._resolve_high(
+            _mem("new", 0.9, "preference"),
+            _mem("old", 0.5, "identity"),
+            "reason",
+            "direct",
+        )
+
+    store.record.assert_awaited_once_with(
+        db,
+        "ph",
+        "direct",
+        "trust_wins",
+        "higher trust_score prevails",
+        "unknown-source",
+    )
+    store.reinforce.assert_not_awaited()
+    MockQueue.return_value.enqueue.assert_not_awaited()
 
 
 # ── user-tier tie guard (GH #37) ─────────────────────────────────────────────
