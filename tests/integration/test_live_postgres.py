@@ -11,8 +11,10 @@ from datetime import UTC, datetime
 
 import pytest
 
+from jeli_scoped_mcp.config import Settings
 from jeli_scoped_mcp.database.pool import AsyncPostgresPool
 from jeli_scoped_mcp.embedding.provider import EmbeddingResult
+from jeli_scoped_mcp.server.mcp_server import ScopedMCPServer
 from jeli_scoped_mcp.tools.memory_tools import MemoryTools
 
 DB_URL = os.getenv("JELI_TEST_DB_URL")
@@ -115,6 +117,47 @@ async def test_concurrent_writers_do_not_fork_chain(live_tools):
     assert prevs.count(None) == 1
     non_null = [p for p in prevs if p is not None]
     assert len(non_null) == len(set(non_null))
+
+
+async def test_concurrent_inbox_flood_limit_holds_exactly_at_boundary(live_tools):
+    _, db = live_tools
+    await db.execute("TRUNCATE memory_inbox")
+    server = ScopedMCPServer.__new__(ScopedMCPServer)
+    server.db = db
+    server.settings = Settings(
+        chain_key="itest-chain-key",
+        inbox_flood_window_seconds=300,
+        inbox_flood_max_low_trust=2,
+        inbox_flood_trust_ceiling=0.6,
+    )
+
+    results = await asyncio.gather(
+        *(
+            server._submit_to_inbox(
+                {
+                    "content": f"concurrent low-trust record {index}",
+                    "trust_score": 0.5,
+                    "memory_type": "semantic",
+                },
+                actor="compromised-agent",
+            )
+            for index in range(5)
+        )
+    )
+
+    assert [result["status"] for result in results].count("queued") == 2
+    assert [result["status"] for result in results].count("held") == 3
+    assert await db.fetchval(
+        "SELECT count(*) FROM memory_inbox WHERE status = 'pending'"
+    ) == 2
+    assert await db.fetchval(
+        """
+        SELECT count(*) FROM memory_inbox
+        WHERE status = 'held'
+          AND requires_review
+          AND review_reason = 'source_flood_limit'
+        """
+    ) == 3
 
 
 async def test_injection_capped_live(live_tools):

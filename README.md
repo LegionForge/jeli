@@ -352,6 +352,9 @@ The three-branch governance model and the poisoning defenses are now usable from
 | `SCOPED_MCP_KEY_PROVIDER` | `env` | where the chain key comes from: `env`, `file`, `keychain`, `1password`, `openbao`, `passphrase`. See [docs/key-management.md](docs/key-management.md) |
 | `SCOPED_MCP_KEY_REF` | *(empty)* | provider-specific locator (file path, keychain service, `op://` reference, or hex salt for the passphrase KDF) |
 | `SCOPED_MCP_AGENT_ACTOR` | `unknown-agent` | principal stamped on every write/audit row; set per agent instance; not settable by the agent itself |
+| `SCOPED_MCP_INBOX_FLOOD_WINDOW_SECONDS` | `300` | rolling window for per-actor low-trust inbox admission control |
+| `SCOPED_MCP_INBOX_FLOOD_MAX_LOW_TRUST` | `20` | records allowed per actor/window before new records are held for review; `0` disables |
+| `SCOPED_MCP_INBOX_FLOOD_TRUST_CEILING` | `0.6` | submissions at or below this trust count toward the flood cap |
 | `SCOPED_MCP_EMBEDDING_PROVIDER` | `ollama` | local-first; `openai` is the opt-in (truncated to 1024 dims) |
 | `OLLAMA_MODEL` | `snowflake-arctic-embed2` | must emit 1024 dims (the index standard); `qwen3-embedding` also supported |
 | `SCOPED_MCP_EMBEDDING_DIMENSIONS` | auto | only needed for Ollama models not in the built-in dims map |

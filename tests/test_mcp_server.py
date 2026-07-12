@@ -6,6 +6,7 @@ the inbox, and the retired tools (verify_chain, redact) being unreachable.
 """
 
 import json
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -34,8 +35,17 @@ def _server(settings: Settings) -> ScopedMCPServer:
         return_value={
             "id": "11111111-1111-1111-1111-111111111111",
             "submitted_at": datetime.now(UTC),
+            "status": "pending",
+            "review_reason": None,
         }
     )
+    db.fetchval = AsyncMock(return_value=0)
+
+    @asynccontextmanager
+    async def _locked(_key):
+        yield db
+
+    db.locked_transaction = _locked
     server = ScopedMCPServer.__new__(ScopedMCPServer)
     server.db = db
     server.settings = settings
@@ -396,6 +406,67 @@ async def test_submit_to_inbox_row_none_raises():
             {"content": "hello world", "trust_score": 0.5, "memory_type": "episodic"},
             actor="hermes",
         )
+
+
+async def test_submit_to_inbox_holds_at_source_flood_boundary():
+    server = _server(_settings(inbox_flood_max_low_trust=2))
+    server.db.fetchval = AsyncMock(return_value=2)
+    server.db.fetchrow = AsyncMock(
+        return_value={
+            "id": "11111111-1111-1111-1111-111111111111",
+            "submitted_at": datetime.now(UTC),
+            "status": "held",
+            "review_reason": "source_flood_limit",
+        }
+    )
+
+    result = await server._submit_to_inbox(
+        {"content": "hello world", "trust_score": 0.5, "memory_type": "episodic"},
+        actor="hermes",
+    )
+
+    assert result["status"] == "held"
+    assert result["review_reason"] == "source_flood_limit"
+    args = server.db.fetchrow.await_args.args
+    assert args[9:] == ("held", True, "source_flood_limit")
+
+
+async def test_submit_to_inbox_queues_below_source_flood_boundary():
+    server = _server(_settings(inbox_flood_max_low_trust=2))
+    server.db.fetchval = AsyncMock(return_value=1)
+
+    result = await server._submit_to_inbox(
+        {"content": "hello world", "trust_score": 0.5, "memory_type": "episodic"},
+        actor="hermes",
+    )
+
+    assert result["status"] == "queued"
+    args = server.db.fetchrow.await_args.args
+    assert args[9:] == ("pending", False, None)
+
+
+async def test_submit_to_inbox_skips_flood_count_for_high_trust():
+    server = _server(_settings(inbox_flood_trust_ceiling=0.6))
+
+    result = await server._submit_to_inbox(
+        {"content": "reviewed", "trust_score": 0.9, "memory_type": "semantic"},
+        actor="human-review",
+    )
+
+    assert result["status"] == "queued"
+    server.db.fetchval.assert_not_awaited()
+
+
+async def test_submit_to_inbox_disabled_flood_control_skips_count():
+    server = _server(_settings(inbox_flood_max_low_trust=0))
+
+    result = await server._submit_to_inbox(
+        {"content": "hello world", "trust_score": 0.5, "memory_type": "episodic"},
+        actor="hermes",
+    )
+
+    assert result["status"] == "queued"
+    server.db.fetchval.assert_not_awaited()
 
 
 # ── audit_trail dispatch ──────────────────────────────────────────────────────
