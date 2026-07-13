@@ -22,6 +22,16 @@ BACKUP_DIR="$REPO_ROOT/backups"
 ALEMBIC=".venv/bin/alembic"
 PYTHON=".venv/bin/python"
 
+# Alembic reads connection URLs from the process environment (unlike the
+# application, it does not load pydantic's .env file). Export the same local
+# configuration before migration checks and server startup.
+if [ -f "$REPO_ROOT/.env" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "$REPO_ROOT/.env"
+    set +a
+fi
+
 # ── 1. Git dirty check ────────────────────────────────────────────────────────
 # Uncommitted changes to migration files = potentially half-edited SQL.
 # Refuse to auto-migrate; require a clean commit first.
@@ -36,10 +46,12 @@ fi
 
 # ── 2. Pre-migration backup ───────────────────────────────────────────────────
 # Check whether any migrations are pending before doing the expensive pg_dump.
-# alembic upgrade head --sql produces output only when there's work to do.
+# `upgrade head --sql` always emits a script preamble, even at head, so compare
+# Alembic's current revision to its declared head instead.
 if [ "${JELI_SKIP_BACKUP:-0}" != "1" ] && command -v pg_dump > /dev/null 2>&1; then
-    PENDING_SQL=$("$ALEMBIC" upgrade head --sql 2>/dev/null || true)
-    if [ -n "$PENDING_SQL" ]; then
+    CURRENT_REV=$("$ALEMBIC" current 2>/dev/null | awk 'NR == 1 {print $1}' || true)
+    HEAD_REV=$("$ALEMBIC" heads 2>/dev/null | awk 'NR == 1 {print $1}' || true)
+    if [ -n "$HEAD_REV" ] && [ "$CURRENT_REV" != "$HEAD_REV" ]; then
         mkdir -p "$BACKUP_DIR"
         BACKUP_FILE="$BACKUP_DIR/pre-migrate-$(date +%Y%m%d-%H%M%S).sql"
         # Pull DB URL from the env the same way pydantic-settings does.
@@ -48,7 +60,7 @@ if [ "${JELI_SKIP_BACKUP:-0}" != "1" ] && command -v pg_dump > /dev/null 2>&1; t
         DB_URL=${DB_URL:-$(grep -E '^SCOPED_MCP_DB_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d '"' || true)}
         if [ -n "$DB_URL" ]; then
             pg_dump "$DB_URL" > "$BACKUP_FILE" \
-                && echo "jeli: pre-migration backup → $BACKUP_FILE"
+                && echo "jeli: pre-migration backup → $BACKUP_FILE" >&2
         else
             echo "jeli: SCOPED_MCP_DB_URL not found in .env — skipping backup" >&2
         fi
