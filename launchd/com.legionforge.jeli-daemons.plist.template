@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.legionforge.jeli-daemons</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>@HOME@/Library/Application Support/LegionForge/jeli-daemon-launcher.sh</string>
+        <string>start</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>JELI_PROJECT_DIR</key>
+        <string>@PROJECT_DIR@</string>
+        <key>JELI_ENV_FILE</key>
+        <string>@HOME@/Library/Application Support/LegionForge/jeli.env</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <!-- Respawn on crash only; the launcher exits 0 on unfixable config errors
+         so a broken install cannot crash-loop. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>@HOME@/Library/Logs/LegionForge/jeli-daemons.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>@HOME@/Library/Logs/LegionForge/jeli-daemons.err.log</string>
+</dict>
+</plist>

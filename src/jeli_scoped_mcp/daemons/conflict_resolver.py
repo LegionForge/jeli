@@ -112,6 +112,10 @@ class ConflictResolverDaemon:
                     WHERE id = (
                         SELECT id FROM memory_conflict_queue
                         WHERE status = 'pending'
+                           -- Reclaim claims abandoned by dead workers (same
+                           -- 1-hour threshold `jeli verify` counts as stuck).
+                           OR (status = 'processing'
+                               AND claimed_at < now() - interval '1 hour')
                         ORDER BY enqueued_at ASC
                         LIMIT 1
                         FOR UPDATE SKIP LOCKED

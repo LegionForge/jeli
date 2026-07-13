@@ -13,6 +13,7 @@ the write path is Phase 3 (see TECHNICAL-SPECIFICATION.md, Next Phases).
 import hashlib
 import json
 import logging
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -284,6 +285,17 @@ class MemoryTools:
         )
         meta: dict[str, Any] = dict(metadata or {})
         meta["content_class"] = content_class
+
+        # memory_entry.session_id and memory_audit_log.source_session are UUID
+        # columns, but the MCP surface (and the inbox's Text column) accept any
+        # string, so agents legitimately send labels like "jeli-design-2026-07-10".
+        # Keep the label in hashed metadata instead of crashing the promotion.
+        if session_id is not None:
+            try:
+                session_id = str(uuid.UUID(str(session_id)))
+            except ValueError:
+                meta["session_label"] = str(session_id)
+                session_id = None
         if flagged:
             meta["injection_flagged"] = True
             if override_reason:

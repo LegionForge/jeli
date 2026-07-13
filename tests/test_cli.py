@@ -408,3 +408,86 @@ def test_import_bad_archive_prints_error(monkeypatch, capsys, tmp_path):
     )
     assert cli.main(["import", str(archive)]) == 1
     assert "error:" in capsys.readouterr().err
+
+
+# ── health ────────────────────────────────────────────────────────────────────
+
+
+def _patch_health(monkeypatch, health_result, chain_key="test-chain-key"):
+    async def fake_run_health(settings):
+        return health_result
+
+    monkeypatch.setattr(cli, "_run_health", fake_run_health)
+    settings = FakeSettings()
+    settings.chain_key = chain_key
+    monkeypatch.setattr(cli, "Settings", lambda: settings)
+
+
+def test_health_all_ok_exit_0(monkeypatch, capsys):
+    _patch_health(
+        monkeypatch,
+        {"ok": True, "checks": {"postgres": {"ok": True, "active_memories": 5}}},
+    )
+    assert cli.main(["health"]) == 0
+    out = capsys.readouterr().out
+    assert "postgres" in out
+    assert "ok" in out
+
+
+def test_health_failing_check_exit_1(monkeypatch, capsys):
+    _patch_health(
+        monkeypatch,
+        {
+            "ok": False,
+            "checks": {"ollama": {"ok": False, "error": "connection refused"}},
+        },
+    )
+    assert cli.main(["health"]) == 1
+    out = capsys.readouterr().out
+    assert "FAIL" in out
+    assert "connection refused" in out
+
+
+def test_health_json_output(monkeypatch, capsys):
+    result = {"ok": True, "checks": {"postgres": {"ok": True}}}
+    _patch_health(monkeypatch, result)
+    assert cli.main(["health", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == result
+
+
+def test_health_runs_without_chain_key(monkeypatch, capsys):
+    """health must not require a resolvable chain key — a broken provider is a
+    finding it reports, not a startup precondition (unlike every other cmd)."""
+    _patch_health(
+        monkeypatch,
+        {"ok": False, "checks": {"chain_key": {"ok": False, "error": "no key"}}},
+        chain_key="",
+    )
+    assert cli.main(["health"]) == 1  # not the exit-2 config error path
+
+
+@pytest.mark.asyncio
+async def test_run_health_env_provider_missing_key(monkeypatch):
+    """_run_health with env provider and empty key: chain_key check fails,
+    postgres failure is captured as an error rather than raised."""
+    settings = FakeSettings()
+    settings.chain_key = ""
+    settings.embedding_provider = "openai"  # skip the ollama check
+    settings.litellm_base_url = ""
+
+    class BoomPool:
+        def __init__(self, **kw):
+            pass
+
+        async def connect(self):
+            raise OSError("db down")
+
+    monkeypatch.setattr(cli, "AsyncPostgresPool", BoomPool)
+    result = await cli._run_health(settings)
+    assert result["ok"] is False
+    assert result["checks"]["postgres"]["ok"] is False
+    assert "db down" in result["checks"]["postgres"]["error"]
+    assert result["checks"]["chain_key"]["ok"] is False
+    assert "openbao" not in result["checks"]
+    assert "ollama" not in result["checks"]
+    assert "litellm" not in result["checks"]

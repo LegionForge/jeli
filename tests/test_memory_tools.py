@@ -321,6 +321,24 @@ async def test_capture_requires_actor(tools):
         await capture(tools, actor="")
 
 
+async def test_capture_non_uuid_session_id_becomes_label(tools, pool):
+    # memory_entry.session_id is a UUID column; a label like this used to
+    # crash inbox promotion with an asyncpg DataError (found live 2026-07-13).
+    result = await capture(tools, session_id="jeli-design-2026-07-10")
+    assert result["id"]
+    assert pool.memories[0]["session_id"] is None
+    meta = json.loads(pool.memories[0]["metadata"])
+    assert meta["session_label"] == "jeli-design-2026-07-10"
+
+
+async def test_capture_uuid_session_id_passes_through(tools, pool):
+    sid = str(uuid.uuid4())
+    await capture(tools, session_id=sid)
+    assert pool.memories[0]["session_id"] == sid
+    meta = json.loads(pool.memories[0]["metadata"])
+    assert "session_label" not in meta
+
+
 # ── search_memory ────────────────────────────────────────────────────────────
 
 

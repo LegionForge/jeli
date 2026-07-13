@@ -1,6 +1,6 @@
 """Jeli Scoped MCP Server — Security & Governance Layer for Personal Memory Systems."""
 
-__version__ = "0.1.0-alpha"
+__version__ = "0.2.0-alpha"
 __author__ = "JP Cruz"
 __license__ = "MIT"
 

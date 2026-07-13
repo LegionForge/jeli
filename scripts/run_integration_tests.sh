@@ -2,8 +2,14 @@
 set -euo pipefail
 
 # Spin up a disposable pgvector Postgres, migrate it, run the live-DB
-# integration suite against it, then tear it down. Run from the repo root with
-# the project venv active (the integration tests import jeli_scoped_mcp).
+# integration suite against it, then tear it down.
+
+# Use the repo venv when present so the script doesn't depend on whichever
+# python happens to be on PATH (alembic needs psycopg2 from the dev extras).
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_ROOT"
+PYTHON="python"
+[[ -x "$REPO_ROOT/.venv/bin/python" ]] && PYTHON="$REPO_ROOT/.venv/bin/python"
 
 COMPOSE_FILE="docker-compose.test.yml"
 TEST_DB_PORT="${JELI_TEST_DB_PORT:-5433}"
@@ -29,8 +35,8 @@ done
 # POSTGRES_USER is a superuser of jeli_test, so app and admin URLs coincide).
 export SCOPED_MCP_DB_URL="postgresql://jeli_test:jeli_test_password@localhost:${TEST_DB_PORT}/jeli_test"
 export SCOPED_MCP_ADMIN_DB_URL="$SCOPED_MCP_DB_URL"
-python -m alembic upgrade head
+"$PYTHON" -m alembic upgrade head
 
 # Run integration tests (tests skip themselves unless JELI_TEST_DB_URL is set)
 export JELI_TEST_DB_URL="$SCOPED_MCP_DB_URL"
-python -m pytest tests/integration/ -v --tb=short --no-cov
+"$PYTHON" -m pytest tests/integration/ -v --tb=short --no-cov

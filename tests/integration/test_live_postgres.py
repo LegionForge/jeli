@@ -373,3 +373,40 @@ async def test_precedent_sustained_dissent_overturns(live_db):
     assert flipped.winner_rule == "newer prevails"
     assert flipped.confidence == pytest.approx(0.5)  # fresh base
     assert flipped.applied_count == 1  # case law restarts
+
+
+async def test_stale_processing_claim_is_reclaimed(live_tools):
+    """A conflict-queue claim abandoned by a dead worker (processing >1h) must
+    be claimable again; a fresh processing claim must not be (found live
+    2026-07-13: a July-9 claim sat stuck for four days)."""
+    from jeli_scoped_mcp.daemons.conflict_resolver import ConflictResolverDaemon
+
+    tools, db = live_tools
+    receipt = await tools.capture_memory(
+        content="stale claim reclaim test",
+        memory_type="semantic",
+        trust_score=0.6,
+        actor="itest",
+    )
+    # capture_memory's trigger auto-enqueues a pending row for the new memory;
+    # clear it so the stale claim is the only candidate.
+    await db.execute("DELETE FROM memory_conflict_queue")
+    stale = await db.fetchrow(
+        """
+        INSERT INTO memory_conflict_queue (memory_id, status, claimed_by, claimed_at)
+        VALUES ($1, 'processing', 'dead-worker', now() - interval '2 hours')
+        RETURNING id
+        """,
+        receipt["id"],
+    )
+
+    resolver = ConflictResolverDaemon(
+        db=db, embedder=StubEmbedder(), chain_key="itest-chain-key", worker_id="itest-resolver"
+    )
+    row = await resolver._claim_one()
+    assert row is not None
+    assert row["id"] == stale["id"]
+    assert row["claimed_by"] == "itest-resolver"
+
+    # the row is now freshly claimed — it must NOT be handed out again
+    assert await resolver._claim_one() is None
