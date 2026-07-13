@@ -52,7 +52,15 @@ for job in "${JOBS[@]}"; do
         "$template" > "$target"
     plutil -lint "$target" > /dev/null
     if [[ $BOOTSTRAP -eq 1 ]]; then
-        launchctl bootout "gui/$(id -u)/$label" 2> /dev/null || true
+        # bootout completes asynchronously; bootstrapping before the old job is
+        # fully unloaded fails with "Bootstrap failed: 5: Input/output error".
+        if launchctl print "gui/$(id -u)/$label" > /dev/null 2>&1; then
+            launchctl bootout "gui/$(id -u)/$label" 2> /dev/null || true
+            for _ in $(seq 1 20); do
+                launchctl print "gui/$(id -u)/$label" > /dev/null 2>&1 || break
+                sleep 0.5
+            done
+        fi
         launchctl bootstrap "gui/$(id -u)" "$target"
         echo "bootstrapped: $label"
     else
@@ -61,5 +69,5 @@ for job in "${JOBS[@]}"; do
 done
 
 echo
-echo "REMINDER: the OpenBAO token in .env was flagged for rotation (2026-07-09)."
-echo "After rotating, update the repo .env and re-run this script to re-sync."
+echo "REMINDER: after rotating any credential in the repo .env, re-run this"
+echo "script — the Application Support copy does not update itself."
