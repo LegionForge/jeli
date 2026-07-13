@@ -81,7 +81,13 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "material; only takes effect for user-tier sources)."
                     ),
                 },
-                "session_id": {"type": "string"},
+                "session_id": {
+                    "type": "string",
+                    "description": (
+                        "UUID of the originating session. Non-UUID labels are "
+                        "accepted but stored as metadata.session_label instead."
+                    ),
+                },
                 "metadata": {"type": "object"},
             },
             "required": ["content", "memory_type", "trust_score"],
