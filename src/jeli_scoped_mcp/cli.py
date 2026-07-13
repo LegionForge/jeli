@@ -13,6 +13,121 @@ from .tools.memory_tools import MemoryTools
 from .tools.state_tools import StateTools
 
 
+async def _run_health(settings: Settings) -> dict:
+    """Light per-dependency health check: reachability and basic sanity for
+    every service the daemons wait on, plus a queue/summary snapshot. This is
+    NOT the O(n) hash recompute — run `jeli verify` for chain integrity."""
+    import aiohttp
+
+    checks: dict[str, dict[str, Any]] = {}
+
+    db_check: dict[str, Any] = {"ok": False}
+    try:
+        db = AsyncPostgresPool(db_url=settings.db_url, min_size=1, max_size=1)
+        await db.connect()
+        try:
+            rev = await db.fetchrow("SELECT version_num FROM alembic_version")
+            summary = await db.fetchrow(
+                """
+                SELECT
+                  (SELECT COUNT(*) FROM memory_entry
+                     WHERE valid_until IS NULL) AS active_memories,
+                  (SELECT COUNT(*) FROM memory_inbox
+                     WHERE status = 'pending') AS inbox_pending,
+                  (SELECT COUNT(*) FROM memory_inbox
+                     WHERE status = 'held') AS inbox_held,
+                  (SELECT COUNT(*) FROM memory_conflict_queue
+                     WHERE status IN ('failed', 'processing')
+                       AND (status = 'failed'
+                            OR claimed_at < now() - interval '1 hour')
+                  ) AS stuck_conflicts
+                """
+            )
+            db_check = {
+                "ok": True,
+                "migration": rev["version_num"] if rev else None,
+                **dict(summary or {}),
+            }
+        finally:
+            await db.close()
+    except Exception as exc:
+        db_check["error"] = str(exc)[:200]
+    checks["postgres"] = db_check
+
+    if settings.embedding_provider == "ollama":
+        ollama: dict[str, Any] = {"ok": False, "model": settings.ollama_model}
+        try:
+            url = f"{settings.ollama_base_url.rstrip('/')}/api/tags"
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+            names = {m.get("name", "") for m in data.get("models", [])}
+            present = any(
+                n == settings.ollama_model or n.split(":")[0] == settings.ollama_model
+                for n in names
+            )
+            ollama["ok"] = present
+            if not present:
+                ollama["error"] = f"model {settings.ollama_model!r} not installed"
+        except Exception as exc:
+            ollama["error"] = str(exc)[:200]
+        checks["ollama"] = ollama
+
+    if settings.key_provider == "openbao":
+        import subprocess  # nosec B404 — used with fixed argv, no shell
+
+        bao: dict[str, Any] = {"ok": False}
+        try:
+            # Exit 0 = unsealed, 2 = sealed; both print status JSON. The seal
+            # status endpoint is unauthenticated, so this never touches the key.
+            out = subprocess.run(  # nosec B603 B607 — shell=False, fixed argv
+                ["bao", "status", "-format=json"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            status = json.loads(out.stdout) if out.stdout.strip() else {}
+            bao["initialized"] = status.get("initialized")
+            bao["sealed"] = status.get("sealed")
+            bao["ok"] = status.get("initialized") is True and status.get("sealed") is False
+            if not bao["ok"] and not status:
+                bao["error"] = (out.stderr or "no status output").strip()[:200]
+        except Exception as exc:
+            bao["error"] = str(exc)[:200]
+        checks["openbao"] = bao
+
+    key_check: dict[str, Any] = {"ok": False, "provider": settings.key_provider}
+    try:
+        if settings.key_provider == "env":
+            key_check["ok"] = bool(settings.chain_key)
+            if not key_check["ok"]:
+                key_check["error"] = "SCOPED_MCP_CHAIN_KEY is not set"
+        else:
+            from .keyprovider import resolve_chain_key
+
+            # Resolve to prove custody works; the material itself is discarded.
+            key_check["ok"] = bool(resolve_chain_key(settings, prompt=False))
+    except Exception as exc:
+        key_check["error"] = str(exc)[:200]
+    checks["chain_key"] = key_check
+
+    if settings.litellm_base_url:
+        litellm: dict[str, Any] = {"ok": False}
+        try:
+            url = f"{settings.litellm_base_url.rstrip('/')}/health/liveliness"
+            async with aiohttp.ClientSession() as sess:
+                async with sess.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    litellm["ok"] = resp.status == 200
+                    if resp.status != 200:
+                        litellm["error"] = f"HTTP {resp.status}"
+        except Exception as exc:
+            litellm["error"] = str(exc)[:200]
+        checks["litellm"] = litellm
+
+    return {"ok": all(c["ok"] for c in checks.values()), "checks": checks}
+
+
 async def _run_verify(settings: Settings) -> dict:
     db = AsyncPostgresPool(db_url=settings.db_url, min_size=1, max_size=2)
     await db.connect()
@@ -677,6 +792,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    # ── health ────────────────────────────────────────────────────────────────
+    health_p = sub.add_parser(
+        "health",
+        help="check runtime dependencies (PostgreSQL, Ollama, OpenBAO, chain key, LiteLLM)",
+    )
+    health_p.add_argument("--json", action="store_true", help="machine-readable output")
+
     # ── verify ────────────────────────────────────────────────────────────────
     verify_p = sub.add_parser("verify", help="verify hash-chain integrity")
     verify_p.add_argument("--json", action="store_true", help="machine-readable output")
@@ -838,6 +960,22 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     settings = Settings()
+
+    # health runs BEFORE chain-key resolution: a broken key provider is a
+    # finding health should report, not a reason it cannot start.
+    if args.command == "health":
+        health = asyncio.run(_run_health(settings))
+        if args.json:
+            print(json.dumps(health, indent=2))
+        else:
+            for name, check in health["checks"].items():
+                mark = "ok  " if check["ok"] else "FAIL"
+                detail = ", ".join(
+                    f"{k}={v}" for k, v in check.items() if k not in ("ok",) and v is not None
+                )
+                print(f"  {name:10s} {mark}  {detail}")
+        return 0 if health["ok"] else 1
+
     # Resolve the chain key via the configured provider (default "env" is a
     # no-op that returns the value already loaded). Populates settings.chain_key
     # so every downstream consumer is unchanged.

@@ -21,6 +21,12 @@ Three jobs are installed from the templates in `launchd/`:
 
 Logs: `~/Library/Logs/LegionForge/jeli-*.log`.
 
+First diagnostic when anything looks wrong: `jeli health` — one line per
+dependency (PostgreSQL + queue snapshot, Ollama model, OpenBAO seal state,
+chain-key custody, LiteLLM), exit 1 if any check fails. It checks the same
+services the launcher waits on, so a failing `jeli health` explains a
+launcher stuck in its dependency loop.
+
 ## Why the indirection (macOS constraints, learned the hard way)
 
 - **launchd cannot execute entrypoint scripts or read env files that live on
