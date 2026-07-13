@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jeli-scoped-mcp"
-version = "0.1.0-alpha"
+version = "0.2.0-alpha"
 description = "Security & governance layer for personal memory systems. Cryptographic integrity, contradiction detection, user veto."
 readme = "README.md"
 license = { text = "MIT" }
@@ -79,6 +79,9 @@ dev = [
     "mypy>=1.7.0",
     "httpx>=0.25.0",
     "testcontainers>=3.7.0",  # For ephemeral test Postgres
+    # Alembic's sync migration driver. The app itself uses asyncpg; without
+    # this, `alembic upgrade` fails with ModuleNotFoundError outside CI.
+    "psycopg2-binary>=2.9.0",
 ]
 
 [project.urls]
