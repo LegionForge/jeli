@@ -370,9 +370,43 @@ class ScopedMCPServer:
                 entity_results = ReadGate().apply(entity_results, actor=actor, rules=active_rules)
             return entity_results
         if name == "get_entity_graph":
-            return await self.graph.get_entity_graph(
+            from ..constitutional.gate import ReadGate
+            from ..constitutional.manager import ConstitutionalManager
+            from ..constitutional.rules import RuleType
+
+            evidence = await self.graph.memories_for_entity(
                 self.db, entity_name=arguments["entity_name"]
             )
+            apply_read_defenses(evidence)
+            # Structured relations cannot carry the quarantine wrapper that
+            # protects textual reads, so flagged evidence is not allowed to
+            # create an unmarked agent-facing edge.
+            evidence = [r for r in evidence if not r["injection_flagged"]]
+
+            active_rules = await ConstitutionalManager().load_active_rules(self.db)
+            visibility_rules = [
+                rule
+                for rule in active_rules
+                if rule.rule_type != RuleType.MAX_RESULTS.value
+            ]
+            if visibility_rules:
+                evidence = ReadGate().apply(evidence, actor=actor, rules=visibility_rules)
+            if not evidence:
+                return {"entity": None, "relations": [], "memory_count": 0}
+
+            graph = await self.graph.get_entity_graph(
+                self.db,
+                entity_name=arguments["entity_name"],
+                visible_memory_ids={r["id"] for r in evidence},
+            )
+            max_rules = [
+                rule for rule in active_rules if rule.rule_type == RuleType.MAX_RESULTS.value
+            ]
+            if max_rules:
+                graph["relations"] = ReadGate().apply(
+                    graph["relations"], actor=actor, rules=max_rules
+                )
+            return graph
         if name == "summarize_session":
             # Same gate as any other agent write: inbox when enabled, agent-tier
             # trust always. The old path stored summaries at 0.9 directly on the

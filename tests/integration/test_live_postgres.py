@@ -295,6 +295,50 @@ async def test_search_scoping_filters(live_tools):
     assert [h["content"] for h in hits] == ["briarios scoped deployment note"]
 
 
+async def test_entity_relations_are_attributed_and_visibility_filterable(live_tools):
+    """GH #52: relation SQL derives edges from explicit source-memory evidence."""
+    from jeli_scoped_mcp.graph.store import GraphStore
+
+    _tools, db = live_tools
+    await db.execute("TRUNCATE entity CASCADE")
+    graph = GraphStore()
+    tools = MemoryTools(
+        db=db,
+        embedder=StubEmbedder(),
+        chain_key="itest-chain-key",
+        key_id="k1",
+        graph_store=graph,
+    )
+    captured = await tools.capture_memory(
+        content="JP Cruz works on Jeli.",
+        memory_type="semantic",
+        trust_score=0.8,
+        actor="itest",
+    )
+
+    evidence = await graph.memories_for_entity(db, "Jeli")
+    assert [row["id"] for row in evidence] == [captured["id"]]
+
+    visible = await graph.get_entity_graph(
+        db, "Jeli", visible_memory_ids={captured["id"]}
+    )
+    assert visible["memory_count"] == 1
+    assert visible["relations"] == [
+        {
+            "predicate": "works_on",
+            "subject": "JP Cruz",
+            "object": "Jeli",
+            "evidence_count": 1,
+            "confidence": 1.0,
+            "direction": "incoming",
+        }
+    ]
+
+    hidden = await graph.get_entity_graph(db, "Jeli", visible_memory_ids=set())
+    assert hidden["memory_count"] == 0
+    assert hidden["relations"] == []
+
+
 # ── judicial precedent case-law semantics (real upsert SQL) ───────────────────
 
 
