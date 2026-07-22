@@ -645,8 +645,8 @@ class TestHmacVerifiedImport:
         assert meta["imported_from"]["hmac_verified"] is False
 
     @pytest.mark.asyncio
-    async def test_verified_record_still_strips_server_owned_metadata(self):
-        """HMAC verification doesn't bypass the metadata whitelist (GH #37 stays intact)."""
+    async def test_verified_record_still_strips_nonprotective_server_metadata(self):
+        """Verified origin does not replay nonprotective server authority."""
         chain_key = "test-chain-key"
         dangerous_meta = {
             "content_class": "general",
@@ -661,6 +661,63 @@ class TestHmacVerifiedImport:
         meta = mock_tools.capture_memory.call_args.kwargs["metadata"]
         assert "injection_flagged" not in meta
         assert "trust_override_reason" not in meta
+
+    @pytest.mark.asyncio
+    async def test_verified_record_preserves_positive_injection_flags(self):
+        """GH #53: attested quarantine state survives an own-store restore."""
+        chain_key = "test-chain-key"
+        rec = _make_hmac_verified_record(
+            "natural-language injection",
+            chain_key,
+            metadata={
+                "content_class": "general",
+                "injection_flagged": True,
+                "llm_injection_flagged": True,
+                "trust_override_reason": "must-still-be-stripped",
+            },
+        )
+        importer, mock_tools = self._make_importer(chain_key=chain_key)
+        await importer.import_stream(_make_export_stream([rec]))
+
+        meta = mock_tools.capture_memory.call_args.kwargs["metadata"]
+        assert meta["injection_flagged"] is True
+        assert meta["llm_injection_flagged"] is True
+        assert "trust_override_reason" not in meta
+
+    @pytest.mark.asyncio
+    async def test_verified_llm_flag_implies_aggregate_injection_flag(self):
+        """An inconsistent old record cannot restore an unwrapped LLM flag."""
+        chain_key = "test-chain-key"
+        rec = _make_hmac_verified_record(
+            "natural-language injection",
+            chain_key,
+            metadata={"content_class": "general", "llm_injection_flagged": True},
+        )
+        importer, mock_tools = self._make_importer(chain_key=chain_key)
+        await importer.import_stream(_make_export_stream([rec]))
+
+        meta = mock_tools.capture_memory.call_args.kwargs["metadata"]
+        assert meta["llm_injection_flagged"] is True
+        assert meta["injection_flagged"] is True
+
+    @pytest.mark.asyncio
+    async def test_unverified_record_cannot_preserve_positive_injection_flags(self):
+        """Foreign archives still cannot assert server-owned security state."""
+        rec = _make_hmac_verified_record(
+            "foreign payload",
+            "foreign-chain-key",
+            metadata={
+                "content_class": "general",
+                "injection_flagged": True,
+                "llm_injection_flagged": True,
+            },
+        )
+        importer, mock_tools = self._make_importer(chain_key="test-chain-key")
+        await importer.import_stream(_make_export_stream([rec]))
+
+        meta = mock_tools.capture_memory.call_args.kwargs["metadata"]
+        assert "injection_flagged" not in meta
+        assert "llm_injection_flagged" not in meta
 
     def test_try_verify_hmac_swallows_exceptions(self):
         """_try_verify_hmac never raises — bad embedding_dimensions etc. → False."""

@@ -205,6 +205,16 @@ class MemoryImporter:
             for k, v in original_meta.items()
             if k not in SERVER_OWNED_METADATA_KEYS
         }
+        if hmac_verified:
+            # Positive quarantine markers are part of the verified canonical
+            # record, so preserving them cannot be spoofed without the chain
+            # key. Keep every other server-owned field stripped: a restore
+            # should retain protective state, not replay daemon authority.
+            if original_meta.get("injection_flagged") is True:
+                meta["injection_flagged"] = True
+            if original_meta.get("llm_injection_flagged") is True:
+                meta["llm_injection_flagged"] = True
+                meta["injection_flagged"] = True
         redacted = record.get("redacted", False)
 
         # Skip redacted records — content is "[REDACTED]", unusable.
