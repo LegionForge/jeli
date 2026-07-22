@@ -4,6 +4,7 @@ No live DB: a small in-memory fake of AsyncPostgresPool understands exactly the
 queries ConstitutionalManager issues.
 """
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import patch
@@ -12,7 +13,7 @@ import pytest
 from test_memory_tools import FakeEmbedder, capture
 from test_memory_tools import FakePool as MemFakePool
 
-from jeli_scoped_mcp.constitutional.gate import ReadGate
+from jeli_scoped_mcp.constitutional.gate import ReadGate, WriteGate
 from jeli_scoped_mcp.constitutional.manager import ConstitutionalError, ConstitutionalManager
 from jeli_scoped_mcp.constitutional.rules import ConstitutionalRule, sign_rule
 from jeli_scoped_mcp.server.mcp_server import ScopedMCPServer
@@ -97,7 +98,7 @@ def test_read_gate_exclude_tag():
     results = [
         result(metadata={"tags": ["secret", "work"]}),
         result(metadata={"tags": ["work"]}),
-        result(metadata={}),
+        result(metadata={"tags": []}),
     ]
     out = ReadGate().apply(results, actor="hermes", rules=[rule])
     assert len(out) == 2
@@ -369,9 +370,8 @@ def test_infer_content_class_cli_write_untouched():
     assert out == "general"
 
 
-def test_read_gate_unknown_rule_type_leaves_results_unchanged(caplog):
-    """An unknown rule type is logged loudly but results are returned untouched (fail-closed
-    semantics: a mis-typed rule never silently *widens* what agents see)."""
+def test_read_gate_unknown_rule_type_suppresses_results(caplog):
+    """An unevaluable signed read rule cannot silently widen agent visibility."""
     unknown_rule = ConstitutionalRule(
         rule_type="nonexistent_future_rule",
         parameters={},
@@ -381,13 +381,106 @@ def test_read_gate_unknown_rule_type_leaves_results_unchanged(caplog):
         rule_hash="x",
     )
     results = [{"id": "m1", "content": "sensitive info", "memory_type": "preference"}]
-    import logging
-
     with caplog.at_level(logging.WARNING, logger="jeli_scoped_mcp.constitutional.gate"):
         out = ReadGate().apply(results, actor="agent", rules=[unknown_rule])
 
-    assert out == results  # unchanged
+    assert out == []
     assert "unknown rule_type" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "rule_type, parameters, missing_field",
+    [
+        ("exclude_memory_type", {"memory_type": "transient"}, "memory_type"),
+        ("min_trust_floor", {"floor": 0.0}, "effective_trust"),
+        ("exclude_content_class", {"content_class": "security-doc"}, "content_class"),
+    ],
+)
+def test_read_gate_missing_required_result_field_suppresses_row(
+    rule_type, parameters, missing_field, caplog
+):
+    """Even permissive rule values fail closed when a row cannot be evaluated."""
+    row = result()
+    del row[missing_field]
+    with caplog.at_level(logging.ERROR, logger="jeli_scoped_mcp.constitutional.gate"):
+        out = ReadGate().apply([row], actor="agent", rules=[make_rule(rule_type, parameters)])
+    assert out == []
+    assert missing_field in caplog.text
+
+
+@pytest.mark.parametrize("metadata", [None, {}, {"tags": None}, {"tags": "secret"}])
+def test_read_gate_exclude_tag_suppresses_unknown_tag_state(metadata, caplog):
+    rule = make_rule("exclude_tag", {"tag": "secret"})
+    with caplog.at_level(logging.ERROR, logger="jeli_scoped_mcp.constitutional.gate"):
+        out = ReadGate().apply(
+            [result(metadata=metadata)], actor="agent", rules=[rule]
+        )
+    assert out == []
+    assert "metadata.tags" in caplog.text
+
+
+def test_read_gate_exclude_tag_keeps_known_empty_tags():
+    rule = make_rule("exclude_tag", {"tag": "secret"})
+    row = result(metadata={"tags": []})
+    assert ReadGate().apply([row], actor="agent", rules=[rule]) == [row]
+
+
+def test_write_gate_unknown_rule_type_denies_write(caplog):
+    rule = make_rule("future_write_rule", {})
+    with caplog.at_level(logging.ERROR, logger="jeli_scoped_mcp.constitutional.gate"):
+        allowed, trust, reason = WriteGate().check(
+            memory_type="semantic",
+            content_class="general",
+            trust_score=0.6,
+            actor="agent",
+            rules=[rule],
+        )
+    assert allowed is False
+    assert trust == 0.6
+    assert reason == "unknown constitutional rule_type 'future_write_rule'; write denied"
+    assert "write denied" in caplog.text
+
+
+def test_read_gate_ignores_known_write_rules():
+    row = result()
+    rule = make_rule("deny_write_memory_type", {"memory_type": "semantic"})
+    assert ReadGate().apply([row], actor="agent", rules=[rule]) == [row]
+
+
+def test_write_gate_ignores_known_read_rules():
+    rule = make_rule("exclude_memory_type", {"memory_type": "semantic"})
+    allowed, trust, reason = WriteGate().check(
+        memory_type="semantic",
+        content_class="general",
+        trust_score=0.6,
+        actor="agent",
+        rules=[rule],
+    )
+    assert (allowed, trust, reason) == (True, 0.6, None)
+
+
+def test_read_gate_invalid_legacy_rule_suppresses_results(caplog):
+    rule = make_rule("exclude_content_class", {})
+    with caplog.at_level(logging.ERROR, logger="jeli_scoped_mcp.constitutional.gate"):
+        out = ReadGate().apply([result()], actor="agent", rules=[rule])
+    assert out == []
+    assert "invalid stored rule" in caplog.text
+
+
+def test_write_gate_invalid_legacy_rule_denies_write(caplog):
+    rule = make_rule("max_trust_for_content_class", {"content_class": "general"})
+    with caplog.at_level(logging.ERROR, logger="jeli_scoped_mcp.constitutional.gate"):
+        allowed, trust, reason = WriteGate().check(
+            memory_type="semantic",
+            content_class="general",
+            trust_score=0.6,
+            actor="agent",
+            rules=[rule],
+        )
+    assert allowed is False
+    assert trust == 0.6
+    assert reason == "invalid stored constitutional rule_type 'max_trust_for_content_class'; write denied"
+    assert "requires parameter 'max_trust'" in caplog.text
 
 
 # ── load_active_rules TTL cache ──────────────────────────────────────────────
