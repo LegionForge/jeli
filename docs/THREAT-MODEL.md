@@ -14,7 +14,7 @@ trust to this document.
 | Key rotation without re-signing history | per-record key registry; unknown `key_id` fails closed |
 | Agents cannot impersonate other writers | actor identity is server-side config, not a tool argument |
 | Injection-styled content cannot claim authority | write-path pattern match caps trust at 0.3 and flags it; the flag is returned at read time |
-| History cannot be rewritten by the app itself | `jeli_app` DB role holds INSERT+SELECT only (scripts/setup_db_roles.sql) |
+| Hashed memory history cannot be rewritten by the app itself | `jeli_app` cannot update canonical HMAC-covered fields; narrowly scoped UPDATE grants exist only for derived/cache fields such as embeddings and temporal state |
 | Retiring/reviving memories requires the chain key | state changes are hash-chained events; column cache is cross-checked by `jeli verify` |
 | Concurrent writers cannot fork the chain | chain writes serialize under a Postgres advisory lock |
 
@@ -37,6 +37,27 @@ COLUMN-level UPDATE grants only (temporal columns — content remains
 structurally unwritable). Residual: an attacker holding BOTH admin DB
 access and the chain key can still forge state events — same residual as
 the memory chain itself (see chain-key custody below).
+
+**Embedding integrity is not currently attested (GH #56).** The canonical
+memory HMAC covers the embedding model name and dimensions, but not the vector
+itself. The `jeli_app` role has a deliberate column-scoped UPDATE grant on the
+embedding fields so the operator can run `jeli re-embed` when models change.
+Consequently, an attacker with the app role's database access can replace a
+vector and steer semantic retrieval without changing the attested content,
+trust, type, or metadata, and `jeli verify` will still report the memory chain
+as valid. The current guarantee is therefore **content/provenance integrity**,
+not integrity of retrieval geometry.
+
+Simply adding the vector to the immutable memory hash would make every
+legitimate re-embedding look like tampering. The planned control is a separate
+append-only HMAC chain of embedding attestations: capture and re-embed append a
+digest of the float32 vector plus model, dimensions, timestamp, actor, and
+reason; verification checks the current embedding against the latest event.
+Legacy vectors must report as unattested rather than silently passing. Until
+that exists, protect the database credentials that can exercise the embedding
+UPDATE grant and treat semantic ranking as outside `jeli verify`'s integrity
+claim. Compromise of both the chain key and database remains a residual risk,
+as it is for the memory and state-event chains.
 
 **Chain-key compromise defeats verification.** An attacker holding both DB
 write access and the chain key can rewrite and re-sign everything. Planned
