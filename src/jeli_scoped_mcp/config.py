@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     inbox_dedup_merge_distance: float = Field(default=0.15)
     inbox_dedup_hold_distance: float = Field(default=0.22)
     inbox_worker_concurrency: int = Field(default=1)
+    inbox_flood_window_seconds: int = Field(default=300, ge=1)
+    inbox_flood_max_low_trust: int = Field(default=20, ge=0)
+    inbox_flood_trust_ceiling: float = Field(default=0.6, ge=0.0, le=1.0)
 
     # Daemons
     conflict_resolver_enabled: bool = Field(default=True)

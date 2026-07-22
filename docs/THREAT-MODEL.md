@@ -24,8 +24,11 @@ trust to this document.
 writes through the legitimate path and receives a perfectly valid hash. The
 defenses are heuristic (pattern flagging, trust capping, provenance for later
 revocation) — not cryptographic. Jeli v0.1 is *poison-auditable*, not
-poison-proof. Collusive multi-record poisoning and consolidation-skew
-(flooding) attacks are out of scope for v0.1 entirely.
+poison-proof. The inbox limits low-trust submission volume per configured
+actor and retains excess records as held evidence requiring review. This
+contains a compromised actor's promotion rate, but actor rotation, collusive
+multi-source poisoning, retrieval-density anomalies, and consolidation skew
+remain open defenses rather than solved threats.
 
 **Temporal fields — CLOSED as of 006.** Every supersession/invalidation is
 recorded in `memory_state_event`'s own HMAC chain; the mutable columns are a

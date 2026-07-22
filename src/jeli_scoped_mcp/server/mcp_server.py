@@ -39,6 +39,10 @@ from ..tools.memory_tools import (
 
 logger = logging.getLogger(__name__)
 
+# Serializes the per-actor admission count and insert. The inbox is a global
+# queue, so a single lock keeps the boundary exact across server processes.
+INBOX_FLOOD_LOCK = 0x4A454C49
+
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "capture_memory",
@@ -439,36 +443,68 @@ class ScopedMCPServer:
 
         source_metadata = arguments.get("metadata") or None
 
-        row = await self.db.fetchrow(
-            """
-            INSERT INTO memory_inbox (
-                content, content_hash, source_agent, session_id,
-                caller_trust, caller_type, content_class, source_metadata
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
-            RETURNING id, submitted_at
-            """,
-            content,
-            _content_hash(content),
-            actor,
-            arguments.get("session_id"),
-            float(arguments["trust_score"]),
-            arguments["memory_type"],
-            content_class,
-            json.dumps(source_metadata) if source_metadata else None,
-        )
+        caller_trust = float(arguments["trust_score"])
+        flood_control_enabled = self.settings.inbox_flood_max_low_trust > 0
+        async with self.db.locked_transaction(INBOX_FLOOD_LOCK) as conn:
+            recent_count = 0
+            if flood_control_enabled and caller_trust <= self.settings.inbox_flood_trust_ceiling:
+                recent_count = await conn.fetchval(
+                    """
+                    SELECT count(*)
+                    FROM memory_inbox
+                    WHERE source_agent = $1
+                      AND caller_trust <= $2
+                      AND submitted_at >= now() - ($3 * interval '1 second')
+                    """,
+                    actor,
+                    self.settings.inbox_flood_trust_ceiling,
+                    self.settings.inbox_flood_window_seconds,
+                )
+
+            held = (
+                recent_count >= self.settings.inbox_flood_max_low_trust
+                if flood_control_enabled
+                else False
+            )
+            status = "held" if held else "pending"
+            review_reason = "source_flood_limit" if held else None
+            row = await conn.fetchrow(
+                """
+                INSERT INTO memory_inbox (
+                    content, content_hash, source_agent, session_id,
+                    caller_trust, caller_type, content_class, source_metadata,
+                    status, requires_review, review_reason
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)
+                RETURNING id, submitted_at, status, review_reason
+                """,
+                content,
+                _content_hash(content),
+                actor,
+                arguments.get("session_id"),
+                caller_trust,
+                arguments["memory_type"],
+                content_class,
+                json.dumps(source_metadata) if source_metadata else None,
+                status,
+                held,
+                review_reason,
+            )
         if row is None:
             raise MemoryToolError("inbox insert failed")
 
-        logger.info(
-            "capture_memory: queued to inbox id=%s actor=%s type=%s",
+        log = logger.warning if held else logger.info
+        log(
+            "capture_memory: %s in inbox id=%s actor=%s type=%s",
+            status,
             row["id"],
             actor,
             arguments["memory_type"],
         )
         return {
             "inbox_id": str(row["id"]),
-            "status": "queued",
+            "status": "held" if row["status"] == "held" else "queued",
             "submitted_at": row["submitted_at"].isoformat(),
+            **({"review_reason": row["review_reason"]} if row["review_reason"] else {}),
         }
 
     async def run_stdio(self):
