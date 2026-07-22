@@ -225,13 +225,13 @@ class ConflictResolverDaemon:
     async def _resolve_high(
         self, new_mem: dict, old_mem: dict, reason: str, contradiction_type: str = "direct"
     ) -> None:
-        """Resolve a HIGH conflict via precedent, else deliberate and set precedent.
+        """Resolve a HIGH conflict and update advisory precedent.
 
-        The deterministic rule is unchanged (higher trust wins; newer wins on
-        tie). What is new is the case-law layer: if a confident precedent already
-        covers this conflict pattern it is reinforced rather than re-derived;
-        otherwise the fresh outcome is recorded as precedent so it accrues
-        authority over repeated agreement.
+        The deterministic rule is higher trust wins; newer wins on a tie.
+        Precedent is advisory because the pattern key contains only conflict and
+        memory types, not enough evidence to choose a concrete winner safely.
+        Every fresh outcome is recorded: agreement can reinforce confidence,
+        while disagreement erodes even a previously high-confidence precedent.
         """
         from ..judicial.precedent import PrecedentStore
 
@@ -282,40 +282,38 @@ class ConflictResolverDaemon:
         source_key = new_mem.get("source_agent") or UNKNOWN_SOURCE
 
         precedent = await store.lookup(self.db, phash)
-        precedent_applied = precedent is not None and precedent.confidence >= 0.7
-        if precedent_applied:
-            await store.reinforce(self.db, precedent.id, source_key)  # type: ignore[union-attr]
-        else:
-            updated = await store.record(
-                self.db, phash, contradiction_type, resolution, winner_rule, source_key
-            )
-            # An overturn is settled law flipping — rare, high-stakes, and its
-            # interaction with the corroboration ledger is deliberately not
-            # auto-resolved policy yet (JP, 2026-07-10): surface every overturn
-            # for human review alongside the auto-applied outcome.
-            if precedent is not None and updated.resolution != precedent.resolution:
-                from ..judicial.escalation import HumanEscalationQueue
+        precedent_consulted = precedent is not None
+        precedent_agreed = precedent is not None and precedent.resolution == resolution
+        updated = await store.record(
+            self.db, phash, contradiction_type, resolution, winner_rule, source_key
+        )
+        # An overturn is settled law flipping — rare, high-stakes, and its
+        # interaction with the corroboration ledger is deliberately not
+        # auto-resolved policy yet (JP, 2026-07-10): surface every overturn
+        # for human review alongside the fresh deterministic outcome.
+        if precedent is not None and updated.resolution != precedent.resolution:
+            from ..judicial.escalation import HumanEscalationQueue
 
-                await HumanEscalationQueue().enqueue(
-                    self.db,
-                    memory_id_a=str(new_mem["id"]),
-                    memory_id_b=str(old_mem["id"]),
-                    contradiction_type=contradiction_type,
-                    reason=(
-                        f"precedent OVERTURNED: '{precedent.resolution}' -> "
-                        f"'{updated.resolution}' (pattern {phash[:12]}, "
-                        f"source {source_key}); review the flip and its "
-                        f"corroboration history"
-                    ),
-                    severity="high",
-                )
-                logger.warning(
-                    "conflict resolver: precedent %s overturned (%s -> %s) — "
-                    "escalated for human review",
-                    phash[:12],
-                    precedent.resolution,
-                    updated.resolution,
-                )
+            await HumanEscalationQueue().enqueue(
+                self.db,
+                memory_id_a=str(new_mem["id"]),
+                memory_id_b=str(old_mem["id"]),
+                contradiction_type=contradiction_type,
+                reason=(
+                    f"precedent OVERTURNED: '{precedent.resolution}' -> "
+                    f"'{updated.resolution}' (pattern {phash[:12]}, "
+                    f"source {source_key}); review the flip and its "
+                    f"corroboration history"
+                ),
+                severity="high",
+            )
+            logger.warning(
+                "conflict resolver: precedent %s overturned (%s -> %s) — "
+                "escalated for human review",
+                phash[:12],
+                precedent.resolution,
+                updated.resolution,
+            )
 
         from ..tools.memory_tools import MemoryTools
         from ..tools.state_tools import StateTools
@@ -340,15 +338,18 @@ class ConflictResolverDaemon:
                     "reason": reason,
                     "contradiction_type": contradiction_type,
                     "resolution": resolution,
-                    "precedent_applied": precedent_applied,
+                    "precedent_consulted": precedent_consulted,
+                    "precedent_agreed": precedent_agreed,
                 }
             ),
         )
         logger.info(
-            "conflict resolver: invalidated %s (reason: %s, precedent_applied=%s)",
+            "conflict resolver: invalidated %s (reason: %s, "
+            "precedent_consulted=%s, precedent_agreed=%s)",
             loser_id,
             reason,
-            precedent_applied,
+            precedent_consulted,
+            precedent_agreed,
         )
 
     async def _log_conflict(

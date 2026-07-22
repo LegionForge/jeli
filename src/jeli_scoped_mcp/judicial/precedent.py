@@ -2,9 +2,10 @@
 
 A precedent records how a *class* of conflict was resolved — not a single pair
 of memories, but the pattern (the two memory types plus the contradiction
-type). The resolver looks a pattern up before re-deliberating; a precedent
-whose confidence has crossed the apply threshold is reinforced rather than
-re-derived, and each reinforcement nudges confidence toward 1.0.
+type). This key is intentionally too coarse to decide a concrete winner, so
+precedent is advisory: the resolver derives each outcome from current evidence
+and records whether it agrees or dissents. Agreement nudges confidence toward
+1.0; disagreement erodes it and can eventually overturn settled case law.
 
 Confidence growth is gated on *distinct* corroborating sources (GH #44), not
 raw agreement count — see judicial_precedent_corroboration and record()/
