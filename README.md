@@ -291,14 +291,14 @@ At personal memory scale (1k–100k records) an HNSW index at 1024 dims fits com
 
 ## Status
 
-**Current (v0.2.0-alpha):** the full three-branch governance model is implemented and tested: Scoped MCP server (`capture_memory` / `search_memory` / `audit_trail` / `search_by_entity` / `get_entity_graph`), HMAC hash-chained writes with per-record signing-key identity, layered injection defense (regex + unicode normalization + opt-in LLM classifier), Constitutional Read/Write gates over user-signed rules, Judicial conflict resolution with precedent case law and human escalation, entity graph auto-extraction, memory portability (export/import with tamper detection), and the Ingestion Bouncer. 482 unit tests (82% coverage) + 17 live-Postgres integration tests. The index standard is `vector(1024)`: arctic-embed2 native, Qwen3-Embedding MRL ceiling, OpenAI truncatable; model swaps are re-embedding jobs, never schema migrations.
+**Current (v0.2.0-alpha):** the full three-branch governance model is implemented and tested: Scoped MCP server (`capture_memory` / `search_memory` / `audit_trail` / `search_by_entity` / `get_entity_graph`), HMAC hash-chained writes with per-record signing-key identity, layered injection defense (regex + unicode normalization + proxy-backed LLM classifier when configured), Constitutional Read/Write gates over user-signed rules, Judicial conflict resolution with precedent case law and human escalation, entity graph auto-extraction, memory portability (export/import with tamper detection), and the Ingestion Bouncer. The index standard is `vector(1024)`: arctic-embed2 native, Qwen3-Embedding MRL ceiling, OpenAI truncatable; model swaps are re-embedding jobs, never schema migrations.
 
 Deployed in production on local hardware since v0.1.0-alpha (2026-07-02).
 
 **Next:**
 - OB1/lf2b integration (partnership exploration ongoing; standalone deployment works today)
 - Capture breadth decision (browser extension vs app hooks vs clipboard)
-- Default-on lightweight heuristic for natural-language injection rephrasing (GH #33 remainder)
+- Expand and periodically re-run the labeled natural-language injection corpus
 
 ## Quick Start
 
@@ -339,7 +339,7 @@ The three-branch governance model and the poisoning defenses are now usable from
 
 5. **Operational**: `jeli verify --report` produces a full integrity health report (chain + state-chain validity, cache consistency, trust/queue stats); `jeli re-embed` re-embeds stale records after an embedding-model change; `jeli decay-report` lists memories whose effective trust has decayed significantly from their stored score.
 
-> The optional LLM injection classifier (Layer 2 of the injection defense) ships behind the `[llm]` extra: `pip install -e ".[llm]"`. It fails open and only screens sources below trust 0.8. See [SECURITY.md](SECURITY.md) §5.
+> The LLM injection classifier (Layer 2) runs automatically on inbox writes below trust 0.8 when `LITELLM_BASE_URL` is configured. The proxy path uses core `aiohttp`; the `[llm]` extra remains available for direct LiteLLM-library callers without a proxy. It fails open on classifier errors. See [SECURITY.md](SECURITY.md) §5.
 
 ## Configuration
 
@@ -355,6 +355,9 @@ The three-branch governance model and the poisoning defenses are now usable from
 | `SCOPED_MCP_EMBEDDING_PROVIDER` | `ollama` | local-first; `openai` is the opt-in (truncated to 1024 dims) |
 | `OLLAMA_MODEL` | `snowflake-arctic-embed2` | must emit 1024 dims (the index standard); `qwen3-embedding` also supported |
 | `SCOPED_MCP_EMBEDDING_DIMENSIONS` | auto | only needed for Ollama models not in the built-in dims map |
+| `LITELLM_BASE_URL` | *(empty)* | OpenAI-compatible proxy base URL; enables the inbox Layer-2 injection classifier |
+| `LITELLM_API_KEY` | *(empty)* | bearer token for the configured LiteLLM proxy |
+| `SCOPED_MCP_RERANKER_MODEL` | `local-chat` | proxy model used by re-ranking and the injection classifier |
 | `SCOPED_MCP_TRANSPORT` | `stdio` | MCP transport |
 
 ## Contributing / Repo hygiene

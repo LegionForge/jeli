@@ -153,12 +153,15 @@ Injection screening runs on the capture path in two layers:
   (trust ≥ 0.9) whose content is legitimately *about* injection (e.g. a
   security note) is preserved with a recorded override reason instead of being
   capped, so the store can hold security documentation without self-poisoning.
-- **Layer 2, LLM second-pass classifier (optional).** An async second pass that
-  catches natural-language evasions the regex misses. It is **opt-in** (the
-  `[llm]` extra), **fails open** on any error including a missing package (a
-  classifier outage never blocks a legitimate write), and is **skipped for
-  trusted sources** (trust ≥ `LLM_CLASSIFIER_TRUST_SKIP` = 0.8) since those are
-  already above the risk band worth the extra round-trip.
+- **Layer 2, LLM second-pass classifier (configured deployments).** An async
+  second pass that catches natural-language evasions the regex misses. Inbox
+  workers enable it automatically when `LITELLM_BASE_URL` is configured and
+  call that OpenAI-compatible proxy directly through core `aiohttp`; the
+  optional `[llm]` extra remains a fallback for direct library callers without
+  a proxy. It **fails open** on any classifier error (an outage never blocks a
+  legitimate write) and is **skipped for trusted sources** (trust ≥
+  `LLM_CLASSIFIER_TRUST_SKIP` = 0.8) since those are already above the risk band
+  worth the extra round-trip.
 
 At retrieval time, flagged content is wrapped in a `<jeli:quarantine>` envelope
 (or `<jeli:reference>` with an override reason for authoritative security-doc
@@ -187,14 +190,17 @@ wave: MemLineage, MemoryGraft, TMA-NM):
   perfect embedding similarity still ranks below a moderately relevant
   trusted memory.
 
-**Known gap (GitHub [issue #33](https://github.com/LegionForge/jeli/issues/33)):**
-the Layer-1 regex is keyword-oriented; homoglyph and zero-width evasion is now
-folded away by the normalization pre-pass, but a sufficiently reworded
-natural-language instruction still slips through. This is documented
-honestly in the adversarial test suite (`tests/test_adversarial_eval.py`), which
-asserts the false negatives explicitly rather than papering over them. The Layer-2
-LLM classifier exists specifically to close this gap; it is not enabled by default
-because it adds a dependency and a per-write LLM call.
+**Measured Layer-2 boundary (GitHub [issue #33](https://github.com/LegionForge/jeli/issues/33)):**
+the Layer-1 regex remains keyword-oriented, so sufficiently reworded natural-
+language instructions require Layer 2. The versioned 32-case corpus at
+`tests/fixtures/injection_classifier_corpus.json` includes natural-language
+steering, exfiltration, quoted security research, and real production false
+positives. Run `scripts/eval_injection_classifier.py` against the configured
+proxy before changing models or hold policy. On 2026-07-12, local `omlx-chat`
+scored precision 0.9412, recall 1.0, and accuracy 0.9688 after prompt tuning;
+one conservative false positive remained. This is an evaluation floor, not a
+claim of general adversarial robustness, and Layer 2 remains inactive when no
+proxy or direct LiteLLM model is configured.
 
 ---
 

@@ -223,6 +223,8 @@ async def test_process_row_max_retries_sets_held():
 async def test_inbox_worker_llm_classifier_holds_injection():
     worker, db, classifier, memory_tools = _make_worker()
     worker.llm_model = "ollama/qwen3-4b"
+    worker.llm_api_base = "http://proxy.test/v1"
+    worker.llm_api_key = "test-key"
     classifier.classify = AsyncMock(return_value=_decision(status=InboxStatus.APPROVED))
 
     # Regex-clean (no literal trigger words) so the flag can only be
@@ -236,7 +238,7 @@ async def test_inbox_worker_llm_classifier_holds_injection():
     with patch(
         "src.jeli_scoped_mcp.inbox.worker.InjectionDefense.sanitize_content_async",
         new=AsyncMock(return_value=(row["content"], True, "llm_injection")),
-    ):
+    ) as sanitize:
         await worker._process_row(row)
 
     # Flagged → not promoted, held with the llm_classifier reason.
@@ -244,6 +246,8 @@ async def test_inbox_worker_llm_classifier_holds_injection():
     update_args = db.execute.call_args_list[-1].args
     assert update_args[1] == "held"          # final_status
     assert update_args[14] == "llm_classifier"  # review_reason
+    assert sanitize.await_args.kwargs["llm_api_base"] == "http://proxy.test/v1"
+    assert sanitize.await_args.kwargs["llm_api_key"] == "test-key"
 
 
 @pytest.mark.asyncio
