@@ -2,8 +2,6 @@
 
 > A security and governance layer for personal memory systems. Cryptographically verifiable. Poison-resistant. Sovereign.
 
-💛 [Donate to LegionForge](https://legionforge.org/donations) — LegionForge is open-source and independently maintained.
-
 ## Why "Jeli"?
 
 A [jeli](https://en.wikipedia.org/wiki/Griot) (ߖߋ߬ߟߌ, the northern Mande name for a griot) is a West African oral historian, the living memory of a community. For centuries, jelis have carried genealogies, histories, and agreements across generations, trusted precisely because the role carries accountability: a jeli's word is verifiable against the community's collective memory, and a jeli serves as **mediator** when accounts conflict.
@@ -431,3 +429,8 @@ Copyright (c) 2026 JP Cruz (jp@legionforge.org)
 ---
 
 **Jeli is a public good.** The LegionForge memory framework exists so individuals and organizations are not forced into vendor-controlled memory systems. Build with sovereignty in mind.
+
+---
+
+If you find Jeli useful, [donations to LegionForge](https://legionforge.org/donations)
+help support ongoing development — entirely optional, never required.
