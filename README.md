@@ -2,7 +2,7 @@
 
 > A security and governance layer for personal memory systems. Cryptographically verifiable. Poison-resistant. Sovereign.
 
-💛 [Support this project](https://legionforge.org/donations) — LegionForge is open-source and independently maintained.
+💛 [Donate to LegionForge](https://legionforge.org/donations) — LegionForge is open-source and independently maintained.
 
 ## Why "Jeli"?
 
