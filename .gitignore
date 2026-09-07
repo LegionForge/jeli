@@ -10,3 +10,6 @@ htmlcov/
 __pycache__/
 backups/
 .venv/
+
+# Local assessment notes and supporting evidence
+/docs/assessments/local/
