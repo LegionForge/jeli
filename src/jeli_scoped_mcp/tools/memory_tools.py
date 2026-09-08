@@ -248,7 +248,9 @@ class MemoryTools:
         if self._constitutional_mgr is None:
             from ..constitutional.manager import ConstitutionalManager
 
-            self._constitutional_mgr = ConstitutionalManager()
+            self._constitutional_mgr = ConstitutionalManager(
+                key_registry=self.key_registry
+            )
         return self._constitutional_mgr
 
     # ── capture_memory ───────────────────────────────────────────────────────

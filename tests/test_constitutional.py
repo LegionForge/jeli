@@ -14,7 +14,11 @@ from test_memory_tools import FakeEmbedder, capture
 from test_memory_tools import FakePool as MemFakePool
 
 from jeli_scoped_mcp.constitutional.gate import ReadGate, WriteGate
-from jeli_scoped_mcp.constitutional.manager import ConstitutionalError, ConstitutionalManager
+from jeli_scoped_mcp.constitutional.manager import (
+    ConstitutionalError,
+    ConstitutionalIntegrityError,
+    ConstitutionalManager,
+)
 from jeli_scoped_mcp.constitutional.rules import ConstitutionalRule, sign_rule
 from jeli_scoped_mcp.server.mcp_server import ScopedMCPServer
 from jeli_scoped_mcp.tools.memory_tools import MemoryToolError, MemoryTools
@@ -130,6 +134,40 @@ async def test_rule_hash_verification():
     # Tamper with the parameters — signature no longer matches.
     rule.parameters = {"memory_type": "identity"}
     assert await mgr.verify_rule(rule, CHAIN_KEY) is False
+
+
+async def test_authenticated_load_rejects_tampered_active_rule():
+    pool = FakePool()
+    mgr = ConstitutionalManager(key_registry={"k1": CHAIN_KEY})
+    await mgr.add_rule(
+        pool,
+        chain_key=CHAIN_KEY,
+        key_id="k1",
+        rule_type="exclude_memory_type",
+        parameters={"memory_type": "transient"},
+        description="Agents cannot see transient memories",
+    )
+    pool.rules[0]["parameters"] = {"memory_type": "identity"}
+
+    with pytest.raises(ConstitutionalIntegrityError, match="failed authentication"):
+        await mgr.load_active_rules(pool)
+
+
+async def test_authenticated_load_rejects_unknown_rule_key():
+    pool = FakePool()
+    signing_mgr = ConstitutionalManager()
+    await signing_mgr.add_rule(
+        pool,
+        chain_key=CHAIN_KEY,
+        key_id="retired-key",
+        rule_type="exclude_memory_type",
+        parameters={"memory_type": "transient"},
+        description="Agents cannot see transient memories",
+    )
+
+    mgr = ConstitutionalManager(key_registry={"k1": CHAIN_KEY})
+    with pytest.raises(ConstitutionalIntegrityError, match="unknown key_id"):
+        await mgr.load_active_rules(pool)
 
 
 # ── manager add / revoke against a fake pool ────────────────────────────────
@@ -270,16 +308,20 @@ async def test_add_rule_rejects_bad_type():
 
 def rule_row(rule_type: str, parameters: dict, applies_to: str = "all") -> dict:
     """A constitutional_rules row as load_active_rules would read it."""
+    description = f"{rule_type} rule"
+    created_at = datetime.now(UTC)
     return {
         "id": uuid.uuid4(),
         "rule_type": rule_type,
         "parameters": parameters,
-        "description": f"{rule_type} rule",
+        "description": description,
         "applies_to": applies_to,
         "active": True,
-        "created_at": datetime.now(UTC),
+        "created_at": created_at,
         "revoked_at": None,
-        "rule_hash": "unused-in-gate",
+        "rule_hash": sign_rule(
+            CHAIN_KEY, rule_type, parameters, description, applies_to, created_at
+        ),
         "key_id": "k1",
     }
 
@@ -303,6 +345,17 @@ async def test_write_gate_blocks_denied_type():
     with pytest.raises(MemoryToolError, match="write gate blocked"):
         await capture(tools, memory_type="identity", trust_score=0.6)
     # Nothing was persisted — the write was rejected before the chain insert.
+    assert pool.memories == []
+
+
+async def test_memory_tools_refuses_tampered_rule_before_write_gate():
+    row = rule_row("deny_write_memory_type", {"memory_type": "identity"})
+    row["rule_hash"] = "forged"
+    pool = RulePool([row])
+    tools = MemoryTools(db=pool, embedder=FakeEmbedder(), chain_key=CHAIN_KEY)
+
+    with pytest.raises(ConstitutionalIntegrityError, match="failed authentication"):
+        await capture(tools, memory_type="semantic", trust_score=0.6)
     assert pool.memories == []
 
 

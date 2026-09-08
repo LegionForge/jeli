@@ -26,6 +26,10 @@ class ConstitutionalError(Exception):
     """Raised for invalid rule input; message is safe to surface to the user."""
 
 
+class ConstitutionalIntegrityError(ConstitutionalError):
+    """Raised when a stored constitutional rule cannot be authenticated."""
+
+
 def validate_rule_parameters(rule_type: str, parameters: dict) -> None:
     """Ensure a rule carries the parameter its gate needs to enforce (GH #54).
 
@@ -96,10 +100,18 @@ class ConstitutionalManager:
     within one TTL window.
     """
 
-    def __init__(self, ttl: float = 30.0) -> None:
+    def __init__(
+        self,
+        ttl: float = 30.0,
+        key_registry: dict[str, str] | None = None,
+    ) -> None:
         self._cache: list[ConstitutionalRule] | None = None
         self._cache_expires: float = 0.0
         self._CACHE_TTL = ttl
+        # When configured, every active rule must authenticate before it can
+        # influence a gate.  None preserves an explicit inspection-only mode
+        # for callers that do not enforce rules (for example migration tools).
+        self._key_registry = None if key_registry is None else dict(key_registry)
 
     async def add_rule(
         self,
@@ -169,6 +181,7 @@ class ConstitutionalManager:
         if self._cache is not None and time.monotonic() < self._cache_expires:
             return self._cache
         rules = await self._fetch_from_db(db)
+        await self._authenticate_active_rules(rules)
         self._cache = rules
         self._cache_expires = time.monotonic() + self._CACHE_TTL
         return rules
@@ -186,6 +199,23 @@ class ConstitutionalManager:
             """
         )
         return [self._row_to_rule(r) for r in rows]
+
+    async def _authenticate_active_rules(
+        self, rules: list[ConstitutionalRule]
+    ) -> None:
+        """Fail closed before an unauthenticated rule reaches a gate."""
+        if self._key_registry is None:
+            return
+        for rule in rules:
+            chain_key = self._key_registry.get(rule.key_id)
+            if chain_key is None:
+                raise ConstitutionalIntegrityError(
+                    f"constitutional rule {rule.id} uses unknown key_id; enforcement denied"
+                )
+            if not await self.verify_rule(rule, chain_key):
+                raise ConstitutionalIntegrityError(
+                    f"constitutional rule {rule.id} failed authentication; enforcement denied"
+                )
 
     async def load_all_rules(self, db: AsyncPostgresPool) -> list[ConstitutionalRule]:
         """Every rule ever signed, revoked included — for verification.
