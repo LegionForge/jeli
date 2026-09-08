@@ -199,12 +199,40 @@ class FakePool:
 
     def __init__(self):
         self.rules: list[dict] = []
+        self.events: list[dict] = []
 
     async def fetchval(self, query, *args):
         assert "SELECT now()" in query
         return datetime.now(UTC)
 
     async def fetchrow(self, query, *args):
+        if query.strip().startswith("SELECT r.id, r.rule_hash"):
+            (rule_id,) = args
+            for rule in self.rules:
+                already_revoked = any(
+                    str(event["rule_id"]) == str(rule_id) for event in self.events
+                )
+                if str(rule["id"]) == str(rule_id) and not already_revoked:
+                    return {
+                        "id": rule["id"],
+                        "rule_hash": rule["rule_hash"],
+                        "event_at": datetime.now(UTC),
+                    }
+            return None
+        if query.strip().startswith("INSERT INTO constitutional_rule_event"):
+            rule_id, event_at, event_hash, key_id = args
+            event = {
+                "id": uuid.uuid4(),
+                "rule_id": rule_id,
+                "event_type": "revoked",
+                "event_at": event_at,
+                "event_hash": event_hash,
+                "key_id": key_id,
+                "migration_baseline": False,
+            }
+            self.events.append(event)
+            return {"id": event["id"]}
+
         assert query.strip().startswith("INSERT INTO constitutional_rules")
         rule_type, parameters, description, applies_to, created_at, rule_hash, key_id = args
         import json as _json
@@ -226,9 +254,30 @@ class FakePool:
 
     async def fetchall(self, query, *args):
         assert "FROM constitutional_rules" in query
-        if "revoked_at IS NULL" in query:
-            return [r for r in self.rules if r["revoked_at"] is None and r["active"]]
-        return list(self.rules)  # load_all_rules: revoked included
+        rows = []
+        for stored_rule in self.rules:
+            row = dict(stored_rule)
+            event = next(
+                (
+                    candidate
+                    for candidate in self.events
+                    if str(candidate["rule_id"]) == str(row["id"])
+                ),
+                None,
+            )
+            row.update(
+                {
+                    "lifecycle_event_type": event and event["event_type"],
+                    "lifecycle_event_at": event and event["event_at"],
+                    "lifecycle_event_hash": event and event["event_hash"],
+                    "lifecycle_key_id": event and event["key_id"],
+                    "migration_baseline": bool(
+                        event and event["migration_baseline"]
+                    ),
+                }
+            )
+            rows.append(row)
+        return rows
 
     async def execute(self, query, *args):
         assert "UPDATE constitutional_rules" in query
@@ -258,15 +307,58 @@ async def test_add_and_revoke_rule():
     # Signed rule round-trips through the store and still verifies.
     assert await mgr.verify_rule(active[0], CHAIN_KEY) is True
 
-    await mgr.revoke_rule(pool, added["id"])
+    await mgr.revoke_rule(pool, added["id"], CHAIN_KEY, "k1")
     assert await mgr.list_rules(pool) == []
+
+
+async def test_unsigned_lifecycle_flags_cannot_disable_rule():
+    pool = FakePool()
+    mgr = ConstitutionalManager(key_registry={"k1": CHAIN_KEY})
+    await mgr.add_rule(
+        pool,
+        chain_key=CHAIN_KEY,
+        key_id="k1",
+        rule_type="exclude_tag",
+        parameters={"tag": "private"},
+        description="hide private memories",
+    )
+    pool.rules[0]["active"] = False
+    pool.rules[0]["revoked_at"] = datetime.now(UTC)
+
+    assert len(await mgr.load_active_rules(pool)) == 1
+
+
+async def test_forged_revocation_event_fails_closed():
+    pool = FakePool()
+    mgr = ConstitutionalManager(key_registry={"k1": CHAIN_KEY})
+    added = await mgr.add_rule(
+        pool,
+        chain_key=CHAIN_KEY,
+        key_id="k1",
+        rule_type="exclude_tag",
+        parameters={"tag": "private"},
+        description="hide private memories",
+    )
+    pool.events.append(
+        {
+            "rule_id": added["id"],
+            "event_type": "revoked",
+            "event_at": datetime.now(UTC),
+            "event_hash": "forged",
+            "key_id": "k1",
+            "migration_baseline": False,
+        }
+    )
+
+    with pytest.raises(ConstitutionalIntegrityError, match="lifecycle event"):
+        await mgr.load_active_rules(pool)
 
 
 async def test_revoke_unknown_rule():
     pool = FakePool()
     mgr = ConstitutionalManager()
     with pytest.raises(ConstitutionalError, match="not found or already revoked"):
-        await mgr.revoke_rule(pool, str(uuid.uuid4()))
+        await mgr.revoke_rule(pool, str(uuid.uuid4()), CHAIN_KEY, "k1")
 
 
 async def test_load_all_rules_includes_revoked():
@@ -281,7 +373,7 @@ async def test_load_all_rules_includes_revoked():
         parameters={"floor": 0.5},
         description="floor rule",
     )
-    await mgr.revoke_rule(pool, added["id"])
+    await mgr.revoke_rule(pool, added["id"], CHAIN_KEY, "k1")
 
     assert await mgr.list_rules(pool) == []  # gone from the active view
     all_rules = await mgr.load_all_rules(pool)
@@ -303,7 +395,7 @@ async def test_load_all_rules_detects_tampered_revoked_rule():
         parameters={"tag": "secret"},
         description="tag rule",
     )
-    await mgr.revoke_rule(pool, added["id"])
+    await mgr.revoke_rule(pool, added["id"], CHAIN_KEY, "k1")
     pool.rules[0]["parameters"] = {"tag": "harmless"}  # tamper post-revocation
 
     (rule,) = await mgr.load_all_rules(pool)

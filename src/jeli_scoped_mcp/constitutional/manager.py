@@ -15,7 +15,7 @@ import time
 from ..database.pool import AsyncPostgresPool
 from ..security import VALID_CONTENT_CLASSES
 from ..tools.memory_tools import VALID_MEMORY_TYPES
-from .rules import ConstitutionalRule, RuleType, sign_rule
+from .rules import ConstitutionalRule, RuleType, sign_rule, sign_rule_event
 
 logger = logging.getLogger(__name__)
 
@@ -182,23 +182,70 @@ class ConstitutionalManager:
             return self._cache
         rules = await self._fetch_from_db(db)
         await self._authenticate_active_rules(rules)
-        self._cache = rules
+        active_rules = [rule for rule in rules if rule.active]
+        self._cache = active_rules
         self._cache_expires = time.monotonic() + self._CACHE_TTL
-        return rules
+        return active_rules
 
     async def _fetch_from_db(
         self, db: AsyncPostgresPool
     ) -> list[ConstitutionalRule]:
         rows = await db.fetchall(
             """
-            SELECT id, rule_type, parameters, description, applies_to,
-                   active, created_at, revoked_at, rule_hash, key_id
-            FROM constitutional_rules
-            WHERE revoked_at IS NULL AND active = TRUE
-            ORDER BY created_at ASC
+            SELECT r.id, r.rule_type, r.parameters, r.description, r.applies_to,
+                   r.active, r.created_at, r.revoked_at, r.rule_hash, r.key_id,
+                   e.event_type AS lifecycle_event_type,
+                   e.event_at AS lifecycle_event_at,
+                   e.event_hash AS lifecycle_event_hash,
+                   e.key_id AS lifecycle_key_id,
+                   e.migration_baseline
+            FROM constitutional_rules AS r
+            LEFT JOIN constitutional_rule_event AS e ON e.rule_id = r.id
+            ORDER BY r.created_at ASC
             """
         )
-        return [self._row_to_rule(r) for r in rows]
+        rules = []
+        for row in rows:
+            rule = self._row_to_rule(row)
+            await self._derive_lifecycle(rule, row)
+            rules.append(rule)
+        return rules
+
+    async def _derive_lifecycle(self, rule: ConstitutionalRule, row) -> None:
+        """Derive authority only from an authenticated append-only event."""
+        event_at = row.get("lifecycle_event_at")
+        if event_at is None:
+            rule.active = True
+            rule.revoked_at = None
+            return
+
+        event_hash = row.get("lifecycle_event_hash")
+        event_key_id = row.get("lifecycle_key_id")
+        baseline = bool(row.get("migration_baseline"))
+        if baseline:
+            if event_hash is not None or event_key_id is not None:
+                raise ConstitutionalIntegrityError(
+                    f"constitutional rule {rule.id} has malformed lifecycle baseline"
+                )
+        elif self._key_registry is not None:
+            chain_key = self._key_registry.get(event_key_id)
+            if chain_key is None:
+                raise ConstitutionalIntegrityError(
+                    f"constitutional rule {rule.id} lifecycle event uses unknown key_id"
+                )
+            expected = sign_rule_event(
+                chain_key,
+                rule.id or "",
+                rule.rule_hash,
+                row.get("lifecycle_event_type"),
+                event_at,
+            )
+            if event_hash is None or not hmac.compare_digest(event_hash, expected):
+                raise ConstitutionalIntegrityError(
+                    f"constitutional rule {rule.id} lifecycle event failed authentication"
+                )
+        rule.active = False
+        rule.revoked_at = event_at
 
     async def _authenticate_active_rules(
         self, rules: list[ConstitutionalRule]
@@ -224,15 +271,9 @@ class ConstitutionalManager:
         still verify, otherwise tampering with the retired record would be
         undetectable. Uncached — verification always reads the DB.
         """
-        rows = await db.fetchall(
-            """
-            SELECT id, rule_type, parameters, description, applies_to,
-                   active, created_at, revoked_at, rule_hash, key_id
-            FROM constitutional_rules
-            ORDER BY created_at ASC
-            """
-        )
-        return [self._row_to_rule(r) for r in rows]
+        rules = await self._fetch_from_db(db)
+        await self._authenticate_active_rules(rules)
+        return rules
 
     def invalidate_cache(self) -> None:
         """Force the next load_active_rules to hit the DB.
@@ -243,21 +284,48 @@ class ConstitutionalManager:
         self._cache = None
         self._cache_expires = 0.0
 
-    async def revoke_rule(self, db: AsyncPostgresPool, rule_id: str) -> dict:
-        """Retire a rule (never delete): set revoked_at + active=FALSE."""
-        result = await db.execute(
+    async def revoke_rule(
+        self,
+        db: AsyncPostgresPool,
+        rule_id: str,
+        chain_key: str,
+        key_id: str,
+    ) -> dict:
+        """Retire a rule by appending one signed terminal event."""
+        rule = await db.fetchrow(
             """
-            UPDATE constitutional_rules
-            SET revoked_at = now(), active = FALSE
-            WHERE id = $1 AND revoked_at IS NULL
+            SELECT r.id, r.rule_hash, now() AS event_at
+            FROM constitutional_rules AS r
+            WHERE r.id = $1
+              AND NOT EXISTS (
+                  SELECT 1 FROM constitutional_rule_event e
+                  WHERE e.rule_id = r.id AND e.event_type = 'revoked'
+              )
             """,
             rule_id,
         )
-        if result == "UPDATE 0":
+        if rule is None:
             raise ConstitutionalError(f"rule {rule_id} not found or already revoked")
+        event_hash = sign_rule_event(
+            chain_key, str(rule["id"]), rule["rule_hash"], "revoked", rule["event_at"]
+        )
+        inserted = await db.fetchrow(
+            """
+            INSERT INTO constitutional_rule_event
+                (rule_id, event_type, event_at, event_hash, key_id)
+            VALUES ($1, 'revoked', $2, $3, $4)
+            RETURNING id
+            """,
+            rule_id,
+            rule["event_at"],
+            event_hash,
+            key_id,
+        )
+        if inserted is None:
+            raise ConstitutionalError("revocation insert failed: no row returned")
         self.invalidate_cache()
         logger.info("constitutional revoke_rule: id=%s", rule_id)
-        return {"revoked": rule_id}
+        return {"revoked": rule_id, "event_hash": event_hash}
 
     async def verify_rule(self, rule: ConstitutionalRule, chain_key: str) -> bool:
         """Recompute a rule's HMAC and compare — False means tampered."""

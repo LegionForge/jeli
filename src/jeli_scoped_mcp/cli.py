@@ -618,7 +618,9 @@ async def _run_constitutional(settings: Settings, args) -> Any:
     db = AsyncPostgresPool(db_url=db_url, min_size=1, max_size=2)
     await db.connect()
     try:
-        mgr = ConstitutionalManager()
+        mgr = ConstitutionalManager(
+            key_registry={settings.chain_key_id: settings.chain_key}
+        )
         if args.constitutional_cmd == "add":
             try:
                 parameters = json.loads(args.parameters)
@@ -647,7 +649,9 @@ async def _run_constitutional(settings: Settings, args) -> Any:
                 for r in rules
             ]
         if args.constitutional_cmd == "revoke":
-            return await mgr.revoke_rule(db, args.rule_id)
+            return await mgr.revoke_rule(
+                db, args.rule_id, settings.chain_key, settings.chain_key_id
+            )
         # verify — all rules ever signed, revoked included: a tampered retired
         # rule is just as much an integrity breach as a tampered active one
         rules = await mgr.load_all_rules(db)

@@ -11,6 +11,7 @@ from jeli_scoped_mcp.constitutional.manager import ConstitutionalError
 
 class FakeSettings:
     chain_key = "test-chain-key"
+    chain_key_id = "k1"
     db_url = "postgresql://unused"
     key_provider = "env"  # default: CLI skips provider resolution
     key_ref = ""
@@ -93,8 +94,14 @@ async def test_constitutional_mutation_uses_operator_db_url(monkeypatch):
         async def connect(self):
             pass
 
-        async def execute(self, _query, *_args):
-            return "UPDATE 1"
+        async def fetchrow(self, query, *_args):
+            if query.strip().startswith("SELECT r.id, r.rule_hash"):
+                return {
+                    "id": "rule-id",
+                    "rule_hash": "body-hash",
+                    "event_at": datetime.now(UTC),
+                }
+            return {"id": "event-id"}
 
         async def close(self):
             pass
@@ -107,7 +114,7 @@ async def test_constitutional_mutation_uses_operator_db_url(monkeypatch):
         settings, SimpleNamespace(constitutional_cmd="revoke", rule_id="rule-id")
     )
 
-    assert result == {"revoked": "rule-id"}
+    assert result["revoked"] == "rule-id"
     assert opened_urls == [settings.constitutional_db_url]
 
 
