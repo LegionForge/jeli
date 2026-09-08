@@ -777,16 +777,40 @@ class MemoryTools:
         content_class = a_meta.get("content_class", "general")
 
         content = row["content"]
-        if redaction is not None:
+        if not integrity_ok:
+            # audit_trail is agent-facing. Preserve the integrity finding and
+            # forensic metadata, but never return bytes that failed HMAC.
+            content = "[CONTENT WITHHELD: record integrity verification failed]"
+        elif redaction is not None:
             content = (
                 f"[REDACTED by {redaction['actor']} at "
                 f"{redaction['created_at'].isoformat()}: {redaction['reason']}]"
             )
-        elif injection_flagged:
-            # audit_trail is agent-reachable; wrap flagged content so it can't
-            # be used to read a payload raw and bypass the search-time wrap
-            # (GH #40). The forensic fields below still expose the full trail.
-            content = self._wrap_flagged_content(content, float(row["trust_score"]), a_meta)
+
+        # The audit label is not an authorization boundary. Normalize this
+        # single result through the same structural encoding and constitutional
+        # visibility gate as every other agent-readable content surface.
+        visible = {
+            "id": str(row["id"]),
+            "content": content,
+            "metadata": a_meta,
+            "trust_score": float(row["trust_score"]),
+            "memory_type": row["memory_type"],
+            "content_class": content_class,
+            "created_at": row["created_at"],
+        }
+        apply_read_defenses([visible])
+
+        from ..constitutional.gate import ReadGate
+
+        active_rules = await self._constitutional().load_active_rules(self.db)
+        if active_rules and not ReadGate().apply(
+            [visible], actor=actor, rules=active_rules
+        ):
+            raise MemoryToolError(
+                f"memory {memory_id} is not visible under constitutional rules"
+            )
+        content = visible["content"]
 
         events = await self.db.fetchall(
             """
@@ -801,6 +825,7 @@ class MemoryTools:
             "redacted": redaction is not None,
             "memory_type": row["memory_type"],
             "trust_score": float(row["trust_score"]),
+            "effective_trust": visible["effective_trust"],
             "injection_flagged": injection_flagged,
             "content_class": content_class,
             "created_at": row["created_at"].isoformat(),

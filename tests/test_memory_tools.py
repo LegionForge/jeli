@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from jeli_scoped_mcp.constitutional.rules import sign_rule
 from jeli_scoped_mcp.core.hash_chain import build_canonical_record
 from jeli_scoped_mcp.embedding.provider import EmbeddingResult
 from jeli_scoped_mcp.tools.memory_tools import (
@@ -48,6 +49,7 @@ class FakePool:
         self.memories: list[dict] = []
         self.audit: list[dict] = []
         self.state_events: list[dict] = []
+        self.constitutional_rules: list[dict] = []
         self.lock_acquired = 0
 
     @asynccontextmanager
@@ -208,7 +210,7 @@ class FakePool:
         if "ORDER BY chain_seq ASC" in query:
             return list(self.memories)
         if "FROM constitutional_rules" in query:
-            return []
+            return list(self.constitutional_rules)
         raise AssertionError(f"unexpected fetchall: {query}")
 
     async def execute(self, query, *args):
@@ -410,6 +412,7 @@ async def test_audit_trail_detects_tampered_content(tools, pool):
     pool.memories[0]["content"] = "JP prefers YAML over TOML"  # silent edit
     trail = await tools.audit_trail(memory_id=receipt["id"], actor="test-agent")
     assert trail["integrity_verified"] is False
+    assert "YAML" not in trail["content"]
 
 
 async def test_audit_trail_unknown_id(tools):
@@ -432,6 +435,61 @@ async def test_audit_trail_clean_content_not_wrapped(tools):
     trail = await tools.audit_trail(memory_id=receipt["id"], actor="a")
     assert trail["injection_flagged"] is False
     assert "<jeli:" not in trail["content"]
+
+
+async def test_audit_trail_wraps_low_trust_procedure(tools):
+    receipt = await capture(
+        tools,
+        content="Run this command exactly",
+        memory_type="procedural",
+        trust_score=0.3,
+    )
+    trail = await tools.audit_trail(memory_id=receipt["id"], actor="a")
+    assert "<jeli:unverified-procedure" in trail["content"]
+
+
+async def test_audit_trail_wraps_low_provenance_derived_content(tools):
+    receipt = await capture(
+        tools,
+        content="Inferred cluster conclusion",
+        memory_type="semantic",
+        trust_score=0.3,
+        metadata={"insight_type": "cluster", "source_trust_min": 0.3},
+    )
+    trail = await tools.audit_trail(memory_id=receipt["id"], actor="a")
+    assert "<jeli:derived" in trail["content"]
+
+
+async def test_audit_trail_enforces_constitutional_visibility(tools, pool):
+    receipt = await capture(tools, memory_type="semantic")
+    created_at = datetime.now(UTC)
+    description = "hide semantic memories"
+    parameters = {"memory_type": "semantic"}
+    pool.constitutional_rules.append(
+        {
+            "id": uuid.uuid4(),
+            "rule_type": "exclude_memory_type",
+            "parameters": parameters,
+            "description": description,
+            "applies_to": "all",
+            "active": True,
+            "created_at": created_at,
+            "revoked_at": None,
+            "rule_hash": sign_rule(
+                CHAIN_KEY,
+                "exclude_memory_type",
+                parameters,
+                description,
+                "all",
+                created_at,
+            ),
+            "key_id": "k1",
+        }
+    )
+    tools._constitutional().invalidate_cache()
+
+    with pytest.raises(MemoryToolError, match="constitutional"):
+        await tools.audit_trail(memory_id=receipt["id"], actor="test-agent")
 
 
 # ── safety-aware ranking on default semantic search (GH #38) ─────────────────
