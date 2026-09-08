@@ -1,6 +1,6 @@
 # Jeli - an optional security add on for Nate B. Jones' [Open Brain](https://github.com/NateBJones-Projects/OB1)
 
-<!-- Provenance: revised 2026-09-08T10:18:00-05:00 by JP Cruz <jp@legionforge.org>, https://legionforge.org; assisted by OpenAI Codex, provider OpenAI, model GPT-5 family (exact serving ID unavailable), role: documentation. -->
+<!-- Provenance: revised 2026-09-08T10:26:00-05:00 by JP Cruz <jp@legionforge.org>, https://legionforge.org; assisted by OpenAI Codex, provider OpenAI, model GPT-5 family (exact serving ID unavailable), role: documentation. -->
 
 > A security and governance layer for personal memory systems. Cryptographically verifiable. Poison-resistant. Sovereign.
 
@@ -326,10 +326,10 @@ JELI_TEST_DB_PORT=5599 bash scripts/run_integration_tests.sh   # if 5433 is take
 
 The three-branch governance model and the poisoning defenses are now usable from the CLI:
 
-1. **Constitutional layer**: user-signed, hash-chained constraints that no agent can override. `jeli constitutional list` shows active rules; `jeli constitutional add` signs a new one (e.g. cap external content at trust 0.3, or deny agent writes of a memory type):
+1. **Constitutional layer**: user-signed constraints with signed, append-only revocation events that no agent can override. `jeli constitutional list` authenticates body and lifecycle state before showing active rules; `jeli constitutional add` signs a new one (e.g. cap external content at trust 0.3, or deny agent writes of a memory type):
    ```bash
    jeli constitutional add --rule-type max_trust_for_content_class \
-     --parameters '{"content_class":"external","max_trust":0.3}' \
+     --parameters '{"content_class":"external-untrusted","max_trust":0.3}' \
      --description "External content capped at 0.3 trust"
    ```
 

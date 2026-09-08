@@ -1,6 +1,6 @@
 # Security Policy
 
-<!-- Provenance: revised 2026-09-08T10:18:00-05:00 by JP Cruz <jp@legionforge.org>, https://legionforge.org; assisted by OpenAI Codex, provider OpenAI, model GPT-5 family (exact serving ID unavailable), role: security documentation. -->
+<!-- Provenance: revised 2026-09-08T10:26:00-05:00 by JP Cruz <jp@legionforge.org>, https://legionforge.org; assisted by OpenAI Codex, provider OpenAI, model GPT-5 family (exact serving ID unavailable), role: security documentation. -->
 
 Jeli is a security and governance layer for personal memory systems; its entire
 reason to exist is to make memory trustworthy, verifiable, and hard to poison.
@@ -90,9 +90,13 @@ Every write carries a trust score reflecting the authority of its source:
 The Constitutional layer is the inviolable floor: **user-only**, hash-chained,
 and enforced by architecture. Agents can never create, edit, or revoke a rule:
 the CLI (`jeli constitutional add/list/revoke/verify`) is a user-tier surface,
-not an MCP tool. Rules are retired, never deleted; `constitutional verify`
-recomputes each rule's HMAC (revoked rules included, since retired history
-must stay tamper-evident too) and reports any tampering.
+not an MCP tool. Rules are retired, never deleted: revocation appends one signed
+terminal event binding the immutable rule hash, rule identity, event type, and
+database time. Runtime loaders ignore the old mutable lifecycle columns and
+authenticate both bodies and events before enforcement. Legacy revocations are
+preserved as explicit migration baselines; malformed baselines and unavailable
+historical event keys fail closed. `constitutional verify` includes retired
+history because retirement is not license to rewrite it.
 
 This boundary is also enforced at the database role: `jeli_app` has SELECT-only
 access to constitutional rules. `add` and `revoke` require a separately supplied

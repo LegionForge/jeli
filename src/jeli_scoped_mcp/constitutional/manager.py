@@ -1,10 +1,9 @@
 """ConstitutionalManager — user-tier CRUD (append-only) for constitutional rules.
 
-Rules are added, listed, revoked, and verified here. There is no update and no
-delete: a rule is retired by setting revoked_at (active=FALSE), keeping the full
-record of what constraints were ever in force. Every add is HMAC-signed with the
-chain key so tampering is detectable via verify_rule / `jeli constitutional
-verify`.
+Rules are added, listed, revoked, and verified here. There is no update or
+delete: a rule is retired by appending one signed terminal revocation event.
+The legacy active/revoked_at columns are non-authoritative after migration 021.
+Both rule bodies and lifecycle events are authenticated before enforcement.
 """
 
 import hmac
