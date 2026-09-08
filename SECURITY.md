@@ -1,6 +1,6 @@
 # Security Policy
 
-<!-- Provenance: revised 2026-09-08T10:26:00-05:00 by JP Cruz <jp@legionforge.org>, https://legionforge.org; assisted by OpenAI Codex, provider OpenAI, model GPT-5 family (exact serving ID unavailable), role: security documentation. -->
+<!-- Provenance: revised 2026-09-08T10:49:00-05:00 by JP Cruz <jp@legionforge.org>, https://legionforge.org; assisted by OpenAI Codex, provider OpenAI, model GPT-5 family (exact serving ID unavailable), role: security documentation. -->
 
 Jeli is a security and governance layer for personal memory systems; its entire
 reason to exist is to make memory trustworthy, verifiable, and hard to poison.
@@ -108,10 +108,11 @@ Two gates enforce rules:
 - **WriteGate** runs inside `capture_memory` **before the record is hashed**, so
   a denied write never enters the chain and any trust cap is baked into the
   attested record.
-- **ReadGate** runs as the **last step of `search_memory` and `search_by_entity`**,
-  after ranking, so no query an agent constructs can bypass it. An unknown rule
-  type fails *closed* (results untouched but logged loudly) rather than silently
-  widening exposure.
+- **ReadGate** runs as the **last step of every agent-readable content path**,
+  including `search_memory`, `search_by_entity`, graph evidence, and UUID-based
+  `audit_trail`. Audit content also receives the same decay/structural wrappers,
+  and bytes that fail HMAC verification are withheld. An unknown rule type fails
+  *closed* rather than silently widening exposure.
 
 Rule types:
 

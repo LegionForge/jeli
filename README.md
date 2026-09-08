@@ -1,6 +1,6 @@
 # Jeli - an optional security add on for Nate B. Jones' [Open Brain](https://github.com/NateBJones-Projects/OB1)
 
-<!-- Provenance: revised 2026-09-08T10:26:00-05:00 by JP Cruz <jp@legionforge.org>, https://legionforge.org; assisted by OpenAI Codex, provider OpenAI, model GPT-5 family (exact serving ID unavailable), role: documentation. -->
+<!-- Provenance: revised 2026-09-08T10:49:00-05:00 by JP Cruz <jp@legionforge.org>, https://legionforge.org; assisted by OpenAI Codex, provider OpenAI, model GPT-5 family (exact serving ID unavailable), role: documentation. -->
 
 > A security and governance layer for personal memory systems. Cryptographically verifiable. Poison-resistant. Sovereign.
 
@@ -256,7 +256,7 @@ Without it, agents have unrestricted filesystem read/write and shell access. Wit
 - `capture_memory`: write to append-only log (user-confirmed or low-trust agent inferences)
 - `search_memory`: query interface (semantic, FTS, SQL, graph traversal)
 - `summarize_session`: trigger consolidation/dreaming
-- `audit_trail`: read provenance chain
+- `audit_trail`: read provenance through the same HMAC, structural-wrapper, and constitutional gates as search
 
 No shell, no arbitrary file access, all calls logged with source (agent ID, session, timestamp).
 

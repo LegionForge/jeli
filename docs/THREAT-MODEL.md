@@ -1,5 +1,7 @@
 # Jeli Threat Model — v0.1
 
+<!-- Provenance: revised 2026-09-08T10:49:00-05:00 by JP Cruz <jp@legionforge.org>, https://legionforge.org; assisted by OpenAI Codex, provider OpenAI, model GPT-5 family (exact serving ID unavailable), role: threat-model documentation. -->
+
 Honest statement of what the v0.1 integrity layer does and does not guarantee.
 Overclaiming is worse than the gap: agents and users will calibrate their
 trust to this document.
@@ -92,7 +94,7 @@ read-time defenses are applied through a single `apply_read_defenses` /
 | #37 | HIGH | Importer applied no trust ceiling and passed metadata through; a crafted archive could launder trust to 1.0, spoof security-doc, and weaponize the resolver | MITIGATED: import trust ceiling (default 0.3) + metadata strip + user-tier tie escalation guard. Crypto source-verification is the tracked long-term fix |
 | #38 | MEDIUM | Safety-aware re-ranking ran only on `rerank=true` semantic calls | FIXED: unconditional on semantic; flag demotion added to fts ordering |
 | #39 | MEDIUM | Synthesized cluster insights stored unwrapped | FIXED: `<jeli:derived>` wrap when `source_trust_min` < floor |
-| #40 | LOW | `audit_trail` returned content unwrapped and omitted `injection_flagged` | FIXED: flag surfaced; flagged content wrapped |
+| #40 | LOW | `audit_trail` returned content outside the shared read boundary | FIXED: all structural wrappers + authenticated ReadGate applied; failed-HMAC bytes withheld |
 
 The root lesson, now applied: read-time defenses live at a single choke point
 (`apply_read_defenses`), not re-implemented per surface.
