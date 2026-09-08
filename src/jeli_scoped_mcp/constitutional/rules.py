@@ -64,6 +64,25 @@ def sign_rule(
     return compute_record_hash(chain_key, canonical)
 
 
+def sign_rule_event(
+    chain_key: str,
+    rule_id: str,
+    rule_hash: str,
+    event_type: str,
+    event_at: datetime,
+) -> str:
+    """Sign an append-only lifecycle fact for one immutable rule body."""
+    canonical = canonical_json(
+        {
+            "rule_id": str(rule_id),
+            "rule_hash": rule_hash,
+            "event_type": event_type,
+            "event_at": event_at.isoformat(),
+        }
+    )
+    return compute_record_hash(chain_key, canonical)
+
+
 @dataclass
 class ConstitutionalRule:
     """A single user-signed constraint.

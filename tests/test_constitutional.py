@@ -19,7 +19,11 @@ from jeli_scoped_mcp.constitutional.manager import (
     ConstitutionalIntegrityError,
     ConstitutionalManager,
 )
-from jeli_scoped_mcp.constitutional.rules import ConstitutionalRule, sign_rule
+from jeli_scoped_mcp.constitutional.rules import (
+    ConstitutionalRule,
+    sign_rule,
+    sign_rule_event,
+)
 from jeli_scoped_mcp.server.mcp_server import ScopedMCPServer
 from jeli_scoped_mcp.tools.memory_tools import MemoryToolError, MemoryTools
 
@@ -134,6 +138,23 @@ async def test_rule_hash_verification():
     # Tamper with the parameters — signature no longer matches.
     rule.parameters = {"memory_type": "identity"}
     assert await mgr.verify_rule(rule, CHAIN_KEY) is False
+
+
+def test_revocation_signature_binds_rule_identity_body_and_time():
+    event_at = datetime.now(UTC)
+    signature = sign_rule_event(
+        CHAIN_KEY, "rule-1", "body-hash", "revoked", event_at
+    )
+
+    assert signature == sign_rule_event(
+        CHAIN_KEY, "rule-1", "body-hash", "revoked", event_at
+    )
+    assert signature != sign_rule_event(
+        CHAIN_KEY, "rule-2", "body-hash", "revoked", event_at
+    )
+    assert signature != sign_rule_event(
+        CHAIN_KEY, "rule-1", "different-body", "revoked", event_at
+    )
 
 
 async def test_authenticated_load_rejects_tampered_active_rule():

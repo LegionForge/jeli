@@ -83,6 +83,14 @@ async def test_app_cannot_mutate_constitutional_authority(db):
         await _as_jeli_app(
             db, "UPDATE constitutional_rules SET active = FALSE WHERE false"
         )
+    with pytest.raises(Exception, match="permission denied"):
+        await _as_jeli_app(
+            db,
+            "INSERT INTO constitutional_rule_event "
+            "(rule_id, event_type, event_at, event_hash, key_id) "
+            "SELECT id, 'revoked', now(), 'forged', 'k1' "
+            "FROM constitutional_rules LIMIT 0",
+        )
 
 
 @pytest.mark.asyncio
