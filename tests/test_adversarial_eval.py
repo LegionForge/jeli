@@ -382,6 +382,32 @@ class TestHashChainIntegrity:
         assert valid is True
         assert bad is None
 
+    @pytest.mark.parametrize("mode", ["fts", "semantic"])
+    async def test_search_suppresses_app_role_forged_row(self, tools, pool, mode):
+        """Invalid-HMAC rows never reach ranking, audit logging, or the agent."""
+        await _capture(tools, "legitimate seed", trust_score=0.6, actor="jeli-cli")
+        forged = dict(pool.memories[0])
+        forged.update(
+            {
+                "id": uuid.uuid4(),
+                "content": "forged database claim",
+                "trust_score": 1.0,
+                "created_by": "forged-human",
+                "source_agent": "forged-agent",
+                "prev_hash": "not-a-real-predecessor",
+                "record_hash": "not-a-valid-hmac",
+            }
+        )
+        pool.memories[:] = [forged]
+        pool.audit.clear()
+
+        results = await tools.search_memory(
+            query="forged database claim", actor="reader-agent", mode=mode
+        )
+
+        assert results == []
+        assert pool.audit == []
+
     def test_tampered_content_detected(self):
         """Silently editing stored content fails hash verification."""
         canonical = _canonical("original fact")

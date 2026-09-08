@@ -548,7 +548,8 @@ class MemoryTools:
             rows = await self.db.fetchall(
                 f"""
                 SELECT id, content, trust_score, memory_type, created_at,
-                       created_by, source_agent, metadata,
+                       created_by, source_agent, metadata, embedding_model,
+                       embedding_dimensions, prev_hash, record_hash, key_id,
                        (embedding <=> $1::vector) AS distance
                 FROM memory_entry
                 WHERE valid_until IS NULL
@@ -568,7 +569,8 @@ class MemoryTools:
             rows = await self.db.fetchall(
                 f"""
                 SELECT id, content, trust_score, memory_type, created_at,
-                       created_by, source_agent, metadata,
+                       created_by, source_agent, metadata, embedding_model,
+                       embedding_dimensions, prev_hash, record_hash, key_id,
                        ts_rank(to_tsvector('english', content),
                                websearch_to_tsquery('english', $1)) AS rank
                 FROM memory_entry
@@ -587,6 +589,8 @@ class MemoryTools:
         now = datetime.now(UTC)
         results = []
         for r in rows:
+            if not self._authenticate_read_row(r, surface="search_memory"):
+                continue
             r_meta = r["metadata"]
             if isinstance(r_meta, str):
                 r_meta = json.loads(r_meta)
@@ -631,6 +635,7 @@ class MemoryTools:
                     "memory_type": r["memory_type"],
                     "created_at": created_at.isoformat(),
                     "source": r["source_agent"] or r["created_by"],
+                    "integrity_verified": True,
                     "injection_flagged": injection_flagged,
                     "content_class": content_class,
                     **({"distance": float(r["distance"])} if "distance" in r.keys() else {}),
@@ -861,6 +866,31 @@ class MemoryTools:
         return _WRAP_QUARANTINE.format(trust=trust, content=content)
 
     # ── helpers ──────────────────────────────────────────────────────────────
+
+    def _authenticate_read_row(self, row: Any, *, surface: str) -> bool:
+        """Fail closed when a content-bearing row cannot prove its HMAC.
+
+        This authenticates one record against its claimed predecessor hash. It
+        blocks forged inserts but does not prove chain completeness or ordering;
+        the explicit full-chain verifier remains authoritative for those claims.
+        """
+        try:
+            authentic = self._verify_row(row)
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            logger.error(
+                "%s: suppressed malformed unverifiable memory id=%s",
+                surface,
+                row.get("id", "unknown"),
+                exc_info=True,
+            )
+            return False
+        if not authentic:
+            logger.error(
+                "%s: suppressed memory with invalid HMAC id=%s",
+                surface,
+                row.get("id", "unknown"),
+            )
+        return authentic
 
     def _verify_row(
         self,
