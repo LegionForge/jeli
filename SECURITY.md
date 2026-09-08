@@ -1,5 +1,7 @@
 # Security Policy
 
+<!-- Provenance: revised 2026-09-08T10:18:00-05:00 by JP Cruz <jp@legionforge.org>, https://legionforge.org; assisted by OpenAI Codex, provider OpenAI, model GPT-5 family (exact serving ID unavailable), role: security documentation. -->
+
 Jeli is a security and governance layer for personal memory systems; its entire
 reason to exist is to make memory trustworthy, verifiable, and hard to poison.
 This document describes the threat model it is built against, the mechanisms that
@@ -91,6 +93,11 @@ the CLI (`jeli constitutional add/list/revoke/verify`) is a user-tier surface,
 not an MCP tool. Rules are retired, never deleted; `constitutional verify`
 recomputes each rule's HMAC (revoked rules included, since retired history
 must stay tamper-evident too) and reports any tampering.
+
+This boundary is also enforced at the database role: `jeli_app` has SELECT-only
+access to constitutional rules. `add` and `revoke` require a separately supplied
+`SCOPED_MCP_CONSTITUTIONAL_DB_URL`; that credential must be made available only
+to the interactive operator process, never to MCP, Hermes, or another agent.
 
 Two gates enforce rules:
 

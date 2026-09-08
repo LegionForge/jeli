@@ -1,5 +1,7 @@
 # Jeli - an optional security add on for Nate B. Jones' [Open Brain](https://github.com/NateBJones-Projects/OB1)
 
+<!-- Provenance: revised 2026-09-08T10:18:00-05:00 by JP Cruz <jp@legionforge.org>, https://legionforge.org; assisted by OpenAI Codex, provider OpenAI, model GPT-5 family (exact serving ID unavailable), role: documentation. -->
+
 > A security and governance layer for personal memory systems. Cryptographically verifiable. Poison-resistant. Sovereign.
 
 ## Why "Jeli"?
@@ -346,6 +348,7 @@ The three-branch governance model and the poisoning defenses are now usable from
 | Env var | Default | Purpose |
 |---|---|---|
 | `SCOPED_MCP_DB_URL` | `postgresql://jeli_app:...:5442/jeli` | PostgreSQL connection |
+| `SCOPED_MCP_CONSTITUTIONAL_DB_URL` | *(empty)* | Separate user/operator connection for `constitutional add/revoke`; never place it in an MCP or agent service environment |
 | `SCOPED_MCP_API_KEY` | *(required)* | server auth key |
 | `SCOPED_MCP_CHAIN_KEY` | *(required)* | HMAC signing key for the hash chain |
 | `SCOPED_MCP_CHAIN_KEY_ID` | `k1` | identity of the active chain key (rotation: new key ⇒ new id; old records verify under their own key) |
