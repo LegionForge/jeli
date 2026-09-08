@@ -354,6 +354,85 @@ async def test_forged_revocation_event_fails_closed():
         await mgr.load_active_rules(pool)
 
 
+async def test_migration_baseline_retires_legacy_rule():
+    pool = FakePool()
+    mgr = ConstitutionalManager(key_registry={"k1": CHAIN_KEY})
+    added = await mgr.add_rule(
+        pool,
+        chain_key=CHAIN_KEY,
+        key_id="k1",
+        rule_type="exclude_tag",
+        parameters={"tag": "private"},
+        description="legacy retired rule",
+    )
+    event_at = datetime.now(UTC)
+    pool.events.append(
+        {
+            "rule_id": added["id"],
+            "event_type": "revoked",
+            "event_at": event_at,
+            "event_hash": None,
+            "key_id": None,
+            "migration_baseline": True,
+        }
+    )
+
+    assert await mgr.load_active_rules(pool) == []
+    mgr.invalidate_cache()
+    (retired,) = await mgr.load_all_rules(pool)
+    assert retired.revoked_at == event_at
+
+
+async def test_malformed_migration_baseline_fails_closed():
+    pool = FakePool()
+    mgr = ConstitutionalManager(key_registry={"k1": CHAIN_KEY})
+    added = await mgr.add_rule(
+        pool, CHAIN_KEY, "k1", "exclude_tag", {"tag": "private"}, "legacy"
+    )
+    pool.events.append(
+        {
+            "rule_id": added["id"],
+            "event_type": "revoked",
+            "event_at": datetime.now(UTC),
+            "event_hash": "must-be-null",
+            "key_id": None,
+            "migration_baseline": True,
+        }
+    )
+
+    with pytest.raises(ConstitutionalIntegrityError, match="malformed"):
+        await mgr.load_active_rules(pool)
+
+
+async def test_revocation_event_verifies_under_its_own_rotated_key():
+    retired_key = "retired-chain-key"
+    pool = FakePool()
+    mgr = ConstitutionalManager(
+        key_registry={"k1": CHAIN_KEY, "retired": retired_key}
+    )
+    added = await mgr.add_rule(
+        pool, CHAIN_KEY, "k1", "exclude_tag", {"tag": "private"}, "rotated"
+    )
+    event_at = datetime.now(UTC)
+    pool.events.append(
+        {
+            "rule_id": added["id"],
+            "event_type": "revoked",
+            "event_at": event_at,
+            "event_hash": sign_rule_event(
+                retired_key, added["id"], added["rule_hash"], "revoked", event_at
+            ),
+            "key_id": "retired",
+            "migration_baseline": False,
+        }
+    )
+
+    assert await mgr.load_active_rules(pool) == []
+    unknown_key_mgr = ConstitutionalManager(key_registry={"k1": CHAIN_KEY})
+    with pytest.raises(ConstitutionalIntegrityError, match="unknown key_id"):
+        await unknown_key_mgr.load_active_rules(pool)
+
+
 async def test_revoke_unknown_rule():
     pool = FakePool()
     mgr = ConstitutionalManager()
