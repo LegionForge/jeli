@@ -608,7 +608,14 @@ async def _run_inbox_retry(settings: Settings, inbox_id: str) -> dict:
 async def _run_constitutional(settings: Settings, args) -> Any:
     from .constitutional.manager import ConstitutionalError, ConstitutionalManager
 
-    db = AsyncPostgresPool(db_url=settings.db_url, min_size=1, max_size=2)
+    mutating = args.constitutional_cmd in {"add", "revoke"}
+    if mutating and not settings.constitutional_db_url:
+        raise ConstitutionalError(
+            "SCOPED_MCP_CONSTITUTIONAL_DB_URL is required for add/revoke; "
+            "the agent runtime database role is read-only for constitutional rules"
+        )
+    db_url = settings.constitutional_db_url if mutating else settings.db_url
+    db = AsyncPostgresPool(db_url=db_url, min_size=1, max_size=2)
     await db.connect()
     try:
         mgr = ConstitutionalManager()

@@ -18,6 +18,9 @@ class Settings(BaseSettings):
 
     # Database
     db_url: str = Field(default="postgresql://jeli_app@127.0.0.1:5442/jeli")
+    # User-tier constitutional mutations must never reuse the agent runtime
+    # credential. Read-only list/verify operations continue to use db_url.
+    constitutional_db_url: str = Field(default="")
     db_min_size: int = Field(default=5)
     db_max_size: int = Field(default=20)
 

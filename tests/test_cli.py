@@ -1,10 +1,12 @@
 """Tests for the jeli CLI (verify subcommand)."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from jeli_scoped_mcp import cli
+from jeli_scoped_mcp.constitutional.manager import ConstitutionalError
 
 
 class FakeSettings:
@@ -65,6 +67,48 @@ def test_verify_missing_chain_key_exit_2(monkeypatch, capsys):
 def test_no_command_exits(monkeypatch):
     with pytest.raises(SystemExit):
         cli.main([])
+
+
+async def test_constitutional_mutation_requires_operator_db_url(monkeypatch):
+    settings = FakeSettings()
+    settings.constitutional_db_url = ""
+
+    def unexpected_pool(**_kwargs):
+        raise AssertionError("must reject before opening the runtime database")
+
+    monkeypatch.setattr(cli, "AsyncPostgresPool", unexpected_pool)
+    args = SimpleNamespace(constitutional_cmd="revoke", rule_id="rule-id")
+
+    with pytest.raises(ConstitutionalError, match="CONSTITUTIONAL_DB_URL"):
+        await cli._run_constitutional(settings, args)
+
+
+async def test_constitutional_mutation_uses_operator_db_url(monkeypatch):
+    opened_urls = []
+
+    class FakePool:
+        def __init__(self, db_url, **_kwargs):
+            opened_urls.append(db_url)
+
+        async def connect(self):
+            pass
+
+        async def execute(self, _query, *_args):
+            return "UPDATE 1"
+
+        async def close(self):
+            pass
+
+    settings = FakeSettings()
+    settings.constitutional_db_url = "postgresql://constitutional-operator"
+    monkeypatch.setattr(cli, "AsyncPostgresPool", FakePool)
+
+    result = await cli._run_constitutional(
+        settings, SimpleNamespace(constitutional_cmd="revoke", rule_id="rule-id")
+    )
+
+    assert result == {"revoked": "rule-id"}
+    assert opened_urls == [settings.constitutional_db_url]
 
 
 def test_verify_cache_mismatch_exit_1(monkeypatch, capsys):

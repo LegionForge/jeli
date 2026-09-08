@@ -71,6 +71,21 @@ async def test_app_role_has_no_cluster_or_admin_authority(db):
 
 
 @pytest.mark.asyncio
+async def test_app_cannot_mutate_constitutional_authority(db):
+    with pytest.raises(Exception, match="permission denied"):
+        await _as_jeli_app(
+            db,
+            "INSERT INTO constitutional_rules "
+            "(rule_type, parameters, description, rule_hash) "
+            "VALUES ('exclude_tag', '{}', 'forged', 'forged')",
+        )
+    with pytest.raises(Exception, match="permission denied"):
+        await _as_jeli_app(
+            db, "UPDATE constitutional_rules SET active = FALSE WHERE false"
+        )
+
+
+@pytest.mark.asyncio
 async def test_app_cannot_delete_chained_rows(db):
     for table in ("memory_entry", "memory_audit_log", "memory_state_event"):
         with pytest.raises(Exception, match="permission denied"):
