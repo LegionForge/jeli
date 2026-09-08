@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   hermes:
     image: python:3.11-slim
@@ -39,11 +37,13 @@ services:
       - /run
 
   jeli-postgres:
-    image: postgres:16-alpine
+    # Bootstrap a distinct migration administrator. POSTGRES_USER is created
+    # as a superuser by the official image, so it must never be jeli_app.
+    image: pgvector/pgvector:pg17
     container_name: jeli-postgres
     environment:
-      - POSTGRES_USER=jeli_app
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_USER=jeli_admin
+      - POSTGRES_PASSWORD=${POSTGRES_ADMIN_PASSWORD}
       - POSTGRES_DB=jeli
     volumes:
       - jeli-db:/var/lib/postgresql/data
@@ -52,7 +52,7 @@ services:
     networks:
       - jeli-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U jeli_app"]
+      test: ["CMD-SHELL", "pg_isready -U jeli_admin"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -1,5 +1,7 @@
 """Unit tests for security layer: API key validation, injection defense."""
 
+from pathlib import Path
+
 import pytest
 
 from jeli_scoped_mcp.security import (
@@ -455,3 +457,18 @@ class TestValidateApiKeyConvenienceFunction:
         from jeli_scoped_mcp.security import validate_api_key
 
         assert validate_api_key("wrong", "right") is False
+
+
+class TestHermesDatabaseBootstrap:
+    """The documented container path must preserve Jeli's DB role boundary."""
+
+    def test_compose_bootstraps_admin_not_app_and_provides_pgvector(self):
+        root = Path(__file__).resolve().parents[1]
+        compose = (root / "docker-compose.hermes.yml").read_text(encoding="utf-8")
+        template = (root / ".env.hermes.template").read_text(encoding="utf-8")
+
+        assert "image: pgvector/pgvector:pg17" in compose
+        assert "POSTGRES_USER=jeli_admin" in compose
+        assert "POSTGRES_PASSWORD=${POSTGRES_ADMIN_PASSWORD}" in compose
+        assert "POSTGRES_USER=jeli_app" not in compose
+        assert "SCOPED_MCP_DB_URL" not in template

@@ -18,7 +18,7 @@ Edit `.env.hermes`:
 - `DISCORD_TOKEN`: Bot token from Discord Dev Portal
 - `DISCORD_ALLOWED_USERS`: Your Discord user ID (from `@mention`)
 - `ANTHROPIC_API_KEY`: API key from Anthropic console
-- `POSTGRES_PASSWORD`: Generate: `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`
+- `POSTGRES_ADMIN_PASSWORD`: Generate: `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`. This belongs only to the migration/bootstrap identity, never the Jeli runtime or Hermes.
 
 ### 3. Create workspace directory
 ```bash
@@ -62,8 +62,8 @@ docker-compose -f docker-compose.hermes.yml exec hermes /bin/bash
 ### Database Connection (Future)
 ```bash
 # From host
-psql -h 127.0.0.1 -p 5433 -U jeli_app -d jeli
-# Password: from .env.hermes POSTGRES_PASSWORD
+psql -h 127.0.0.1 -p 5433 -U jeli_admin -d jeli
+# Password: from .env.hermes POSTGRES_ADMIN_PASSWORD
 ```
 
 ## Cleanup
@@ -87,6 +87,8 @@ docker volume rm jeli-db hermes-home
 - Network isolated to `jeli-net`
 - Capabilities dropped (NET_BIND_SERVICE only)
 - Read-only filesystem except /tmp, /run
+- PostgreSQL bootstraps a distinct `jeli_admin` migration identity; it never
+  turns the least-privilege `jeli_app` runtime identity into a superuser
 
 ⚠️ **Still Missing (Phase 2):**
 - No Scoped MCP (Hermes can call any tool)
@@ -117,10 +119,15 @@ sudo chown -R $(id -u):$(id -g) hermes-workspace
 ## Next: Phase 2 Integration
 
 When ready (after Scoped MCP implementation):
-```bash
-# Add to docker-compose.hermes.yml:
-SCOPED_MCP_API_KEY: from .env.hermes
-SCOPED_MCP_DB_URL: postgresql://jeli_app:password@jeli-postgres:5432/jeli
-```
 
-Then Hermes will capture memories to Jeli with full auditability.
+1. Run migrations as a one-shot job holding the `jeli_admin` credential.
+2. Provision a separate `jeli_app` login with `NOSUPERUSER NOCREATEDB
+   NOCREATEROLE NOREPLICATION NOBYPASSRLS` and only the grants established by
+   Jeli migrations.
+3. Give the long-running Jeli service only its `jeli_app` connection URL. Do
+   not put the admin URL or password in that service.
+4. Give Hermes only the Scoped MCP endpoint credential. Hermes must not receive
+   either PostgreSQL credential or connect to PostgreSQL directly.
+
+Then Hermes can capture through Jeli's scoped boundary without collapsing the
+database separation of powers.
