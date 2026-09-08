@@ -472,3 +472,21 @@ class TestHermesDatabaseBootstrap:
         assert "POSTGRES_PASSWORD=${POSTGRES_ADMIN_PASSWORD}" in compose
         assert "POSTGRES_USER=jeli_app" not in compose
         assert "SCOPED_MCP_DB_URL" not in template
+
+    def test_forward_migration_demotes_existing_app_role(self):
+        migration = (
+            Path(__file__).resolve().parents[1]
+            / "alembic/versions/019_harden_app_role.py"
+        ).read_text(encoding="utf-8")
+
+        assert "ALTER ROLE jeli_app" in migration
+        for attribute in (
+            "NOSUPERUSER",
+            "NOCREATEDB",
+            "NOCREATEROLE",
+            "NOREPLICATION",
+            "NOBYPASSRLS",
+        ):
+            assert attribute in migration
+        assert "REVOKE jeli_admin FROM jeli_app" in migration
+        assert "SUPERUSER" not in migration.split("def downgrade", 1)[1]

@@ -55,6 +55,22 @@ async def test_app_cannot_update_hashed_columns(db):
 
 
 @pytest.mark.asyncio
+async def test_app_role_has_no_cluster_or_admin_authority(db):
+    row = await db.fetchrow(
+        """
+        SELECT rolsuper, rolcreatedb, rolcreaterole, rolinherit,
+               rolreplication, rolbypassrls
+        FROM pg_roles WHERE rolname = 'jeli_app'
+        """
+    )
+    assert row is not None
+    assert not any(row.values())
+    assert await db.fetchval(
+        "SELECT pg_has_role('jeli_app', 'jeli_admin', 'member')"
+    ) is False
+
+
+@pytest.mark.asyncio
 async def test_app_cannot_delete_chained_rows(db):
     for table in ("memory_entry", "memory_audit_log", "memory_state_event"):
         with pytest.raises(Exception, match="permission denied"):
