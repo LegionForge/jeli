@@ -43,7 +43,9 @@ class Settings(BaseSettings):
     # confirmed" and are reserved for paths with an actual human in the loop
     # (jeli CLI, inbox review). Without this clamp any connected agent could
     # self-declare user-level authority (GH #14).
-    agent_trust_ceiling: float = Field(default=0.6)
+    agent_trust_ceiling: float = Field(
+        default=0.6, ge=0.3, le=0.6, allow_inf_nan=False
+    )
 
     # Embedding
     # Local-first: sovereignty is the default, cloud is the opt-in.

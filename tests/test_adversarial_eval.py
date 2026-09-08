@@ -44,8 +44,9 @@ from jeli_scoped_mcp.core.hash_chain import (
     build_canonical_record,
     compute_record_hash,
 )
-from jeli_scoped_mcp.core.trust_score import TrustAdjustment
+from jeli_scoped_mcp.core.trust_score import TrustAdjustment, TrustScorer
 from jeli_scoped_mcp.embedding.provider import EmbeddingResult
+from jeli_scoped_mcp.portability.importer import MemoryImporter
 from jeli_scoped_mcp.security import InjectionDefense
 from jeli_scoped_mcp.server.mcp_server import ScopedMCPServer
 from jeli_scoped_mcp.tools.memory_tools import (
@@ -275,6 +276,65 @@ class TestTrustForgery:
         trust, clamped = self._server()._clamp_trust(0.9)
         assert trust == 0.6
         assert clamped is True
+
+    @pytest.mark.parametrize(
+        "declared",
+        ["NaN", float("nan"), float("inf"), float("-inf"), True],
+    )
+    def test_mcp_rejects_non_numeric_or_non_finite_trust(self, declared):
+        """Malformed authority values fail before inbox or chain persistence."""
+        with pytest.raises(MemoryToolError, match="finite number"):
+            self._server()._clamp_trust(declared)
+
+    @pytest.mark.parametrize("inbox_enabled", [True, False])
+    async def test_dispatch_rejects_nan_before_any_write(self, inbox_enabled):
+        """The real tool dispatch fails closed for staged and direct writes."""
+        pool = FakePool()
+        server = ScopedMCPServer(
+            pool,
+            FakeEmbedder(),
+            Settings(
+                chain_key=CHAIN_KEY,
+                agent_actor="compromised-agent",
+                inbox_enabled=inbox_enabled,
+            ),
+        )
+
+        with pytest.raises(MemoryToolError, match="finite number"):
+            await server.dispatch(
+                "capture_memory",
+                {"content": "poison", "memory_type": "semantic", "trust_score": "NaN"},
+            )
+
+        assert pool.memories == []
+
+    @pytest.mark.parametrize("score", [float("nan"), float("inf"), float("-inf"), True])
+    def test_domain_rejects_non_finite_or_boolean_trust(self, score):
+        valid, error = TrustScorer.validate(score)
+        assert valid is False
+        assert error is not None
+        with pytest.raises(ValueError, match="finite number"):
+            TrustScorer.clamp(score)
+
+    @pytest.mark.parametrize("ceiling", [float("nan"), float("inf"), 0.61])
+    def test_config_rejects_invalid_agent_ceiling(self, ceiling):
+        with pytest.raises(ValueError):
+            Settings(chain_key=CHAIN_KEY, agent_trust_ceiling=ceiling)
+
+    async def test_import_counts_nan_trust_as_malformed(self):
+        importer = MemoryImporter(
+            db=MagicMock(), embedder=MagicMock(), chain_key=CHAIN_KEY
+        )
+        importer._tools.capture_memory = AsyncMock()
+
+        outcome = await importer._import_record(
+            {"content": "foreign claim", "trust_score": "NaN", "metadata": {}},
+            lineno=2,
+            existing_hashes=set(),
+        )
+
+        assert outcome == "error"
+        importer._tools.capture_memory.assert_not_awaited()
 
     async def test_user_tier_can_write_high_trust(self, tools, pool):
         """A user/CLI-tier write of benign content at trust=1.0 is not capped.

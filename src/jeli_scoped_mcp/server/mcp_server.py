@@ -25,6 +25,7 @@ import re
 from typing import Any
 
 from ..config import Settings
+from ..core.trust_score import TrustScorer
 from ..database.pool import AsyncPostgresPool
 from ..embedding.provider import EmbeddingProvider
 from ..graph import GraphStore
@@ -254,6 +255,9 @@ class ScopedMCPServer:
         Returns (effective_trust, was_clamped). The declared value is kept in
         metadata by the callers so the clamp is visible in the audit trail.
         """
+        valid, error = TrustScorer.validate(declared)
+        if not valid:
+            raise MemoryToolError(error or "trust_score must be a finite number")
         ceiling = self.settings.agent_trust_ceiling
         declared = float(declared)
         if declared > ceiling:

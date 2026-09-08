@@ -31,6 +31,7 @@ import logging
 from typing import IO
 
 from ..core.hash_chain import build_canonical_record, compute_record_hash
+from ..core.trust_score import TrustScorer
 from ..database.pool import AsyncPostgresPool
 from ..embedding.provider import EmbeddingProvider
 from ..tools.memory_tools import SERVER_OWNED_METADATA_KEYS, MemoryTools
@@ -186,6 +187,17 @@ class MemoryImporter:
         memory_type = record.get("memory_type", "episodic")
         content_hash = record.get("content_hash", "")
 
+        raw_trust = record.get("trust_score", 0.5)
+        trust_valid, trust_error = TrustScorer.validate(raw_trust)
+        if not trust_valid:
+            logger.warning(
+                "import: line %d rejected — malformed trust_score: %s",
+                lineno,
+                trust_error,
+            )
+            return "error"
+        record_trust = float(raw_trust)
+
         # Save original metadata (pre-strip) for HMAC verification (GH #41).
         original_meta = dict(record.get("metadata") or {})
         hmac_verified = self._try_verify_hmac(record, original_meta)
@@ -193,9 +205,9 @@ class MemoryImporter:
         # Trust: preserved for HMAC-verified own-store records (GH #41);
         # clamped to import ceiling for everything else (GH #37 default-deny).
         if hmac_verified:
-            trust_score = float(record.get("trust_score", 0.5))
+            trust_score = record_trust
         else:
-            trust_score = min(float(record.get("trust_score", 0.5)), self.trust_ceiling)
+            trust_score = min(record_trust, self.trust_ceiling)
 
         # Strip server-owned provenance/security keys a crafted archive could
         # use to spoof daemon output or downgrade the injection wrap (GH #37,

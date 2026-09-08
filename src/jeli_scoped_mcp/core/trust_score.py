@@ -1,5 +1,6 @@
 """Trust scoring model: assign trust to memories based on source and verification."""
 
+import math
 from enum import Enum
 
 
@@ -32,6 +33,12 @@ class TrustScorer:
     @classmethod
     def clamp(cls, score: float) -> float:
         """Ensure trust score is within valid range [0.3, 1.0]."""
+        if (
+            isinstance(score, bool)
+            or not isinstance(score, (int, float))
+            or not math.isfinite(score)
+        ):
+            raise ValueError("Trust score must be a finite number")
         return max(cls.MIN_TRUST, min(cls.MAX_TRUST, score))
 
     @classmethod
@@ -45,8 +52,14 @@ class TrustScorer:
         Returns:
             Tuple of (is_valid: bool, error_msg: Optional[str])
         """
-        if not isinstance(score, (int, float)):
-            return False, f"Trust score must be numeric, got {type(score).__name__}"
+        if isinstance(score, bool) or not isinstance(score, (int, float)):
+            return (
+                False,
+                f"Trust score must be a finite number (numeric), got {type(score).__name__}",
+            )
+
+        if not math.isfinite(score):
+            return False, "Trust score must be a finite number"
 
         if score < 0.0:
             return False, f"Trust score {score} is below minimum 0.0"
