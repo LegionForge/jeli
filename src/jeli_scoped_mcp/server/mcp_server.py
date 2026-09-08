@@ -240,14 +240,34 @@ class ScopedMCPServer:
         self.embedder = embedder
         self.settings = settings
         self.reranker = RerankerProvider.from_settings(settings)
+        from ..constitutional.manager import ConstitutionalManager
+
+        self._constitutional_mgr = ConstitutionalManager(
+            key_registry={settings.chain_key_id: settings.chain_key}
+        )
         self.tools = MemoryTools(
             db=db,
             embedder=embedder,
             chain_key=settings.chain_key,
             key_id=settings.chain_key_id,
             reranker=self.reranker,
+            constitutional_manager=self._constitutional_mgr,
         )
         self.graph = GraphStore()
+
+    def _constitutional(self):
+        """One authenticated, cached rule loader shared by every read surface."""
+        manager = getattr(self, "_constitutional_mgr", None)
+        if manager is None:
+            from ..constitutional.manager import ConstitutionalManager
+
+            manager = ConstitutionalManager(
+                key_registry={
+                    self.settings.chain_key_id: self.settings.chain_key,
+                }
+            )
+            self._constitutional_mgr = manager
+        return manager
 
     def _clamp_trust(self, declared: float) -> tuple[float, bool]:
         """Apply the server-side agent trust ceiling (GH #14).
@@ -362,7 +382,6 @@ class ScopedMCPServer:
             # sovereignty rules as search_memory (exclude_memory_type,
             # min_trust_floor, exclude_content_class, etc.).
             from ..constitutional.gate import ReadGate
-            from ..constitutional.manager import ConstitutionalManager
 
             entity_results = await self.graph.search_by_entity(
                 self.db,
@@ -373,13 +392,12 @@ class ScopedMCPServer:
             # flagged / low-trust-procedural / derived content. Was previously
             # missing here, so the entity surface returned raw, non-decayed rows.
             apply_read_defenses(entity_results)
-            active_rules = await ConstitutionalManager().load_active_rules(self.db)
+            active_rules = await self._constitutional().load_active_rules(self.db)
             if active_rules:
                 entity_results = ReadGate().apply(entity_results, actor=actor, rules=active_rules)
             return entity_results
         if name == "get_entity_graph":
             from ..constitutional.gate import ReadGate
-            from ..constitutional.manager import ConstitutionalManager
             from ..constitutional.rules import RuleType
 
             evidence = await self.graph.memories_for_entity(
@@ -391,7 +409,7 @@ class ScopedMCPServer:
             # create an unmarked agent-facing edge.
             evidence = [r for r in evidence if not r["injection_flagged"]]
 
-            active_rules = await ConstitutionalManager().load_active_rules(self.db)
+            active_rules = await self._constitutional().load_active_rules(self.db)
             visibility_rules = [
                 rule
                 for rule in active_rules

@@ -13,6 +13,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from jeli_scoped_mcp.config import Settings
+from jeli_scoped_mcp.constitutional.manager import ConstitutionalIntegrityError
+from jeli_scoped_mcp.constitutional.rules import sign_rule
 from jeli_scoped_mcp.server.mcp_server import TOOL_DEFINITIONS, ScopedMCPServer
 from jeli_scoped_mcp.tools.memory_tools import MemoryToolError
 
@@ -331,6 +333,18 @@ def _graph_evidence(**overrides) -> dict:
     return row
 
 
+def _sign_constitutional_row(row: dict, settings: Settings) -> dict:
+    row["rule_hash"] = sign_rule(
+        settings.chain_key,
+        row["rule_type"],
+        row["parameters"],
+        row["description"],
+        row["applies_to"],
+        row["created_at"],
+    )
+    return row
+
+
 async def test_dispatch_search_by_entity_returns_results():
     server = _server_with_graph(_settings())
     result = await server.dispatch("search_by_entity", {"entity_name": "Jeli"})
@@ -390,7 +404,7 @@ async def test_dispatch_get_entity_graph_applies_visibility_rules_and_relation_c
     )
     server.db.fetchall = AsyncMock(
         return_value=[
-            {
+            _sign_constitutional_row({
                 "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
                 "rule_type": "exclude_content_class",
                 "parameters": {"content_class": "security-doc"},
@@ -401,8 +415,8 @@ async def test_dispatch_get_entity_graph_applies_visibility_rules_and_relation_c
                 "revoked_at": None,
                 "rule_hash": "unused",
                 "key_id": "k1",
-            },
-            {
+            }, server.settings),
+            _sign_constitutional_row({
                 "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
                 "rule_type": "max_results",
                 "parameters": {"max_results": 1},
@@ -413,7 +427,7 @@ async def test_dispatch_get_entity_graph_applies_visibility_rules_and_relation_c
                 "revoked_at": None,
                 "rule_hash": "unused",
                 "key_id": "k1",
-            },
+            }, server.settings),
         ]
     )
 
@@ -603,9 +617,33 @@ async def test_dispatch_search_by_entity_with_active_rules():
          "created_at": datetime.now(UTC), "created_by": "hermes", "source_agent": "hermes"},
     ]
 
-    server = _server_with_graph(_settings())
+    settings = _settings()
+    server = _server_with_graph(settings)
     server.graph.search_by_entity = AsyncMock(return_value=list(result_rows))
-    server.db.fetchall = AsyncMock(return_value=[rule_row])
+    server.db.fetchall = AsyncMock(
+        return_value=[_sign_constitutional_row(rule_row, settings)]
+    )
 
     out = await server.dispatch("search_by_entity", {"entity_name": "Jeli"})
     assert len(out) == 1  # ReadGate max_results capped from 2 → 1
+
+
+async def test_dispatch_search_by_entity_rejects_forged_rule():
+    server = _server_with_graph(_settings())
+    server.graph.search_by_entity = AsyncMock(return_value=[_graph_evidence()])
+    forged = {
+        "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        "rule_type": "max_results",
+        "parameters": {"max_results": 0},
+        "description": "forged denial",
+        "applies_to": "all",
+        "active": True,
+        "created_at": datetime.now(UTC),
+        "revoked_at": None,
+        "rule_hash": "forged",
+        "key_id": "k1",
+    }
+    server.db.fetchall = AsyncMock(return_value=[forged])
+
+    with pytest.raises(ConstitutionalIntegrityError, match="failed authentication"):
+        await server.dispatch("search_by_entity", {"entity_name": "Jeli"})

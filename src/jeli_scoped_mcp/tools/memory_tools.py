@@ -223,6 +223,7 @@ class MemoryTools:
         reranker: RerankerProvider | None = None,
         llm_model: str | None = None,
         graph_store: "GraphStore | None" = None,
+        constitutional_manager: Any = None,
     ):
         self.db = db
         self.embedder = embedder
@@ -242,7 +243,7 @@ class MemoryTools:
         self._graph_store = graph_store
         # Persistent constitutional manager so its TTL rule cache survives across
         # the many capture/search calls this instance serves (GH: hot path).
-        self._constitutional_mgr: Any = None
+        self._constitutional_mgr: Any = constitutional_manager
 
     def _constitutional(self) -> Any:
         if self._constitutional_mgr is None:
