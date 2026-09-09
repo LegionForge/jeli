@@ -122,7 +122,9 @@ class GraphStore:
             """
             SELECT DISTINCT m.id, m.content, m.trust_score, m.memory_type,
                    m.created_at, m.created_by, m.source_agent,
-                   m.metadata, (m.metadata->>'content_class') AS content_class
+                   m.metadata, m.embedding_model, m.embedding_dimensions,
+                   m.prev_hash, m.record_hash, m.key_id,
+                   (m.metadata->>'content_class') AS content_class
             FROM memory_entry m
             JOIN memory_entity_link mel ON mel.memory_id = m.id
             JOIN entity e ON e.id = mel.entity_id
@@ -144,6 +146,11 @@ class GraphStore:
                 "memory_type": r["memory_type"],
                 "content_class": r["content_class"] or "general",
                 "metadata": r["metadata"],
+                "embedding_model": r["embedding_model"],
+                "embedding_dimensions": r["embedding_dimensions"],
+                "prev_hash": r["prev_hash"],
+                "record_hash": r["record_hash"],
+                "key_id": r["key_id"],
                 "created_at": r["created_at"].isoformat(),
                 "source": r["source_agent"] or r["created_by"],
             }
@@ -162,7 +169,9 @@ class GraphStore:
             )
             SELECT DISTINCT m.id, m.content, m.trust_score, m.memory_type,
                    m.created_at, m.created_by, m.source_agent,
-                   m.metadata, (m.metadata->>'content_class') AS content_class
+                   m.metadata, m.embedding_model, m.embedding_dimensions,
+                   m.prev_hash, m.record_hash, m.key_id,
+                   (m.metadata->>'content_class') AS content_class
             FROM target t
             JOIN memory_entity_link mel ON mel.entity_id = t.id
             JOIN memory_entry m ON m.id = mel.memory_id
@@ -181,6 +190,11 @@ class GraphStore:
                 "memory_type": r["memory_type"],
                 "content_class": r["content_class"] or "general",
                 "metadata": r["metadata"],
+                "embedding_model": r["embedding_model"],
+                "embedding_dimensions": r["embedding_dimensions"],
+                "prev_hash": r["prev_hash"],
+                "record_hash": r["record_hash"],
+                "key_id": r["key_id"],
                 "created_at": r["created_at"].isoformat(),
                 "source": r["source_agent"] or r["created_by"],
             }

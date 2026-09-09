@@ -232,6 +232,11 @@ class TestGraphStore:
             "source_agent": None,
             "content_class": "general",
             "metadata": None,
+            "embedding_model": "test/model",
+            "embedding_dimensions": 1024,
+            "prev_hash": None,
+            "record_hash": "signed-record-hash",
+            "key_id": "k1",
         }
         db = MagicMock()
         db.fetchall = AsyncMock(return_value=[mem_row])
@@ -268,6 +273,11 @@ class TestGraphStore:
                     "source_agent": None,
                     "content_class": "general",
                     "metadata": {},
+                    "embedding_model": "test/model",
+                    "embedding_dimensions": 1024,
+                    "prev_hash": None,
+                    "record_hash": "signed-record-hash",
+                    "key_id": "k1",
                 }
             ]
         )

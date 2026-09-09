@@ -171,7 +171,7 @@ def wrap_for_read(
 def apply_read_defenses(results: list[dict], *, now: datetime | None = None) -> list[dict]:
     """Apply read-time decay + structural wrapping to already-normalized result
     dicts. The choke point for read surfaces that don't run search_memory's
-    inline loop (search_by_entity today; audit/graph later). Each dict is
+    inline loop (search_by_entity, audit, and graph evidence). Each dict is
     mutated in place: effective_trust recomputed from created_at, content
     wrapped, injection_flagged surfaced.
     """
@@ -894,6 +894,34 @@ class MemoryTools:
         return _WRAP_QUARANTINE.format(trust=trust, content=content)
 
     # ── helpers ──────────────────────────────────────────────────────────────
+
+    def authenticate_read_rows(
+        self, rows: list[dict], *, surface: str
+    ) -> list[dict]:
+        """Return only HMAC-authenticated memory rows, safe for public shaping.
+
+        Graph queries need canonical fields long enough to authenticate the
+        record, but those internal inputs are not part of their tool response.
+        Copy each accepted row, remove the inputs, and surface the positive
+        integrity result explicitly. Unverifiable rows fail closed.
+        """
+        internal_fields = {
+            "embedding_model",
+            "embedding_dimensions",
+            "prev_hash",
+            "record_hash",
+            "key_id",
+        }
+        authenticated: list[dict] = []
+        for row in rows:
+            if not self._authenticate_read_row(row, surface=surface):
+                continue
+            public_row = dict(row)
+            for field in internal_fields:
+                public_row.pop(field, None)
+            public_row["integrity_verified"] = True
+            authenticated.append(public_row)
+        return authenticated
 
     def _authenticate_read_row(self, row: Any, *, surface: str) -> bool:
         """Fail closed when a content-bearing row cannot prove its HMAC.

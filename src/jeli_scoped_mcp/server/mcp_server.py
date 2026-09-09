@@ -388,6 +388,9 @@ class ScopedMCPServer:
                 entity_name=arguments["entity_name"],
                 limit=arguments.get("limit", 10),
             )
+            entity_results = self.tools.authenticate_read_rows(
+                entity_results, surface="search_by_entity"
+            )
             # Same read-time defenses as search_memory (GH #36): decay + wrap
             # flagged / low-trust-procedural / derived content. Was previously
             # missing here, so the entity surface returned raw, non-decayed rows.
@@ -402,6 +405,9 @@ class ScopedMCPServer:
 
             evidence = await self.graph.memories_for_entity(
                 self.db, entity_name=arguments["entity_name"]
+            )
+            evidence = self.tools.authenticate_read_rows(
+                evidence, surface="get_entity_graph"
             )
             apply_read_defenses(evidence)
             # Structured relations cannot carry the quarantine wrapper that
