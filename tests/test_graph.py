@@ -247,6 +247,16 @@ class TestGraphStore:
         assert "trust_score" in results[0]
         assert "effective_trust" in results[0]
         assert results[0]["content_class"] == "general"
+        sql = db.fetchall.call_args.args[0]
+        for field in (
+            "embedded_at",
+            "valid_from",
+            "session_id",
+            "provenance_ref",
+            "amended_from",
+            "canonical_version",
+        ):
+            assert field in sql
 
     @pytest.mark.asyncio
     async def test_search_by_entity_clamps_limit(self):
@@ -285,7 +295,17 @@ class TestGraphStore:
         assert results[0]["id"] == str(memory_id)
         assert results[0]["effective_trust"] == 0.8
         assert results[0]["content_class"] == "general"
-        assert "valid_until IS NULL" in db.fetchall.call_args.args[0]
+        sql = db.fetchall.call_args.args[0]
+        assert "valid_until IS NULL" in sql
+        for field in (
+            "embedded_at",
+            "valid_from",
+            "session_id",
+            "provenance_ref",
+            "amended_from",
+            "canonical_version",
+        ):
+            assert field in sql
 
     @pytest.mark.asyncio
     async def test_get_entity_graph_structure_when_found(self):

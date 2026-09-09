@@ -552,7 +552,9 @@ class MemoryTools:
                 f"""
                 SELECT id, content, trust_score, memory_type, created_at,
                        created_by, source_agent, metadata, embedding_model,
-                       embedding_dimensions, prev_hash, record_hash, key_id,
+                       embedding_dimensions, embedded_at, valid_from,
+                       session_id, provenance_ref, amended_from,
+                       canonical_version, prev_hash, record_hash, key_id,
                        (embedding <=> $1::vector) AS distance
                 FROM memory_entry
                 WHERE valid_until IS NULL
@@ -573,7 +575,9 @@ class MemoryTools:
                 f"""
                 SELECT id, content, trust_score, memory_type, created_at,
                        created_by, source_agent, metadata, embedding_model,
-                       embedding_dimensions, prev_hash, record_hash, key_id,
+                       embedding_dimensions, embedded_at, valid_from,
+                       session_id, provenance_ref, amended_from,
+                       canonical_version, prev_hash, record_hash, key_id,
                        ts_rank(to_tsvector('english', content),
                                websearch_to_tsquery('english', $1)) AS rank
                 FROM memory_entry
@@ -746,9 +750,10 @@ class MemoryTools:
         row = await self.db.fetchrow(
             """
             SELECT id, content, embedding_model, embedding_dimensions,
-                   metadata, trust_score, memory_type, prev_hash, record_hash,
-                   key_id, created_at, created_by, source_agent, valid_until,
-                   superseded_by, amended_from
+                   embedded_at, metadata, trust_score, memory_type, prev_hash,
+                   record_hash, key_id, valid_from, created_at, created_by,
+                   session_id, source_agent, provenance_ref, valid_until,
+                   superseded_by, amended_from, canonical_version
             FROM memory_entry WHERE id = $1
             """,
             memory_id,
@@ -854,8 +859,10 @@ class MemoryTools:
         Returns validity plus the first tampered record id, if any."""
         rows = await self.db.fetchall("""
             SELECT id, content, embedding_model, embedding_dimensions,
-                   metadata, trust_score, memory_type, prev_hash, record_hash,
-                   key_id
+                   embedded_at, metadata, trust_score, memory_type, prev_hash,
+                   record_hash, key_id, valid_from, created_at, created_by,
+                   session_id, source_agent, provenance_ref, amended_from,
+                   canonical_version
             FROM memory_entry ORDER BY chain_seq ASC
             """)
         prev_hash: str | None = None
@@ -908,6 +915,14 @@ class MemoryTools:
         internal_fields = {
             "embedding_model",
             "embedding_dimensions",
+            "embedded_at",
+            "valid_from",
+            "created_by",
+            "source_agent",
+            "session_id",
+            "provenance_ref",
+            "amended_from",
+            "canonical_version",
             "prev_hash",
             "record_hash",
             "key_id",
