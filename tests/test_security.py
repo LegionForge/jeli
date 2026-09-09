@@ -490,3 +490,22 @@ class TestHermesDatabaseBootstrap:
             assert attribute in migration
         assert "REVOKE jeli_admin FROM jeli_app" in migration
         assert "SUPERUSER" not in migration.split("def downgrade", 1)[1]
+
+
+class TestCanonicalVersionMigration:
+    """Cryptographic format labels must be explicit and downgrade-safe."""
+
+    def test_memory_archive_and_state_rows_receive_legacy_v1_labels(self):
+        migration = (
+            Path(__file__).resolve().parents[1]
+            / "alembic/versions/022_canonical_versions.py"
+        ).read_text(encoding="utf-8")
+
+        assert 'revision = "022_canonical_versions"' in migration
+        assert 'down_revision = "021_constitutional_rule_events"' in migration
+        for table in ("memory_entry", "memory_archive", "memory_state_event"):
+            assert f'op.add_column(\n        "{table}"' in migration
+            assert f'"ck_{table}_canonical_version"' in migration
+        assert migration.count('server_default="1"') == 3
+        assert migration.count("canonical_version IN (1, 2)") == 3
+        assert "drop_column" not in migration.split("def downgrade", 1)[1]
