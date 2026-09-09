@@ -1,10 +1,14 @@
 """Unit tests for StateTools (revise / invalidate / two-chain verify)."""
 
+import json
+from datetime import UTC, datetime
+
 import pytest
 from test_memory_tools import CHAIN_KEY, FakeEmbedder, FakePool, capture
 
+from jeli_scoped_mcp.core.hash_chain import compute_record_hash
 from jeli_scoped_mcp.tools.memory_tools import MemoryToolError, MemoryTools
-from jeli_scoped_mcp.tools.state_tools import StateTools
+from jeli_scoped_mcp.tools.state_tools import StateTools, build_canonical_state_event_v2
 
 
 @pytest.fixture
@@ -20,6 +24,56 @@ def tools(pool):
 @pytest.fixture
 def state(pool, tools):
     return StateTools(db=pool, memory_tools=tools, chain_key=CHAIN_KEY, key_id="k1")
+
+
+class TestBuildCanonicalStateEventV2:
+    def _fields(self) -> dict:
+        witnessed_at = datetime(2026, 9, 9, 6, 0, tzinfo=UTC)
+        return {
+            "event_id": "11111111-1111-1111-1111-111111111111",
+            "event_type": "superseded",
+            "target_memory_id": "22222222-2222-2222-2222-222222222222",
+            "successor_memory_id": "33333333-3333-3333-3333-333333333333",
+            "reason": "corrected attribution",
+            "actor": "jp",
+            "valid_until": witnessed_at,
+            "created_at": witnessed_at,
+            "key_id": "k1",
+        }
+
+    def test_v2_is_explicit_and_complete(self):
+        obj = json.loads(build_canonical_state_event_v2(**self._fields()))
+        assert obj == {
+            "actor": "jp",
+            "canonical_version": 2,
+            "created_at": "2026-09-09T06:00:00+00:00",
+            "event_id": "11111111-1111-1111-1111-111111111111",
+            "event_type": "superseded",
+            "key_id": "k1",
+            "reason": "corrected attribution",
+            "successor_memory_id": "33333333-3333-3333-3333-333333333333",
+            "target_memory_id": "22222222-2222-2222-2222-222222222222",
+            "valid_until": "2026-09-09T06:00:00+00:00",
+        }
+
+    @pytest.mark.parametrize(
+        ("field", "replacement"),
+        [
+            ("event_id", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            ("actor", "forged-actor"),
+            ("created_at", datetime(2026, 9, 9, 6, 1, tzinfo=UTC)),
+        ],
+    )
+    def test_v2_binds_each_previously_omitted_field(self, field, replacement):
+        original_fields = self._fields()
+        changed_fields = {**original_fields, field: replacement}
+        original = compute_record_hash(
+            CHAIN_KEY, build_canonical_state_event_v2(**original_fields)
+        )
+        changed = compute_record_hash(
+            CHAIN_KEY, build_canonical_state_event_v2(**changed_fields)
+        )
+        assert changed != original
 
 
 # ── invalidate ───────────────────────────────────────────────────────────────

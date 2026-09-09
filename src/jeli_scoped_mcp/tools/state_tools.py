@@ -9,9 +9,15 @@ an attacker who flips the columns without the key is detected.
 """
 
 import logging
+from datetime import datetime
 from typing import Any
 
-from ..core.hash_chain import HashChainValidator, canonical_json, compute_record_hash
+from ..core.hash_chain import (
+    HashChainValidator,
+    canonical_json,
+    canonical_timestamp,
+    compute_record_hash,
+)
 from ..database.pool import AsyncPostgresPool
 from ..tools.memory_tools import MemoryToolError, MemoryTools
 
@@ -37,6 +43,41 @@ def build_canonical_state_event(
             "successor_memory_id": (str(successor_memory_id) if successor_memory_id else None),
             "reason": reason,
             "valid_until": valid_until,
+            "key_id": key_id,
+        }
+    )
+
+
+def build_canonical_state_event_v2(
+    *,
+    event_id: str,
+    event_type: str,
+    target_memory_id: str,
+    successor_memory_id: str | None,
+    reason: str,
+    actor: str,
+    valid_until: datetime,
+    created_at: datetime,
+    key_id: str,
+) -> str:
+    """Build canonical state-event v2 with identity and attribution bound.
+
+    V1 remains immutable for historical verification. V2 adds the event row
+    identity, actor, and database creation time to the signed state fact.
+    """
+    return canonical_json(
+        {
+            "canonical_version": 2,
+            "event_id": str(event_id),
+            "event_type": event_type,
+            "target_memory_id": str(target_memory_id),
+            "successor_memory_id": (
+                str(successor_memory_id) if successor_memory_id else None
+            ),
+            "reason": reason,
+            "actor": actor,
+            "valid_until": canonical_timestamp(valid_until),
+            "created_at": canonical_timestamp(created_at),
             "key_id": key_id,
         }
     )

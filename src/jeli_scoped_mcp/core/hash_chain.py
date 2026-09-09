@@ -95,7 +95,7 @@ def build_canonical_record(
     return canonical_json(record)
 
 
-def _canonical_timestamp(value: datetime) -> str:
+def canonical_timestamp(value: datetime) -> str:
     """Normalize an authority timestamp to one stable UTC representation."""
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("canonical authority timestamps must be timezone-aware")
@@ -135,13 +135,13 @@ def build_canonical_record_v2(
             "content": content,
             "embedding_model": embedding_model,
             "embedding_dimensions": embedding_dimensions,
-            "embedded_at": _canonical_timestamp(embedded_at),
+            "embedded_at": canonical_timestamp(embedded_at),
             "metadata": metadata or {},
             "trust_hundredths": round(trust_score * 100),
             "memory_type": memory_type,
             "key_id": key_id,
-            "valid_from": _canonical_timestamp(valid_from),
-            "created_at": _canonical_timestamp(created_at),
+            "valid_from": canonical_timestamp(valid_from),
+            "created_at": canonical_timestamp(created_at),
             "created_by": created_by,
             "session_id": str(session_id) if session_id else None,
             "source_agent": source_agent,
