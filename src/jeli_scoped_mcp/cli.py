@@ -722,6 +722,12 @@ async def _run_graph(settings: Settings, args) -> Any:
     await db.connect()
     try:
         store = GraphStore()
+        authenticator = MemoryTools(
+            db=db,
+            embedder=None,
+            chain_key=settings.chain_key,
+            key_id=settings.chain_key_id,
+        )
         if args.graph_cmd == "entities":
             rows = await db.fetchall(
                 """
@@ -741,9 +747,22 @@ async def _run_graph(settings: Settings, args) -> Any:
                 for r in rows
             ]
         if args.graph_cmd == "search":
-            return await store.search_by_entity(db, args.entity, limit=args.limit)
+            rows = await store.search_by_entity(db, args.entity, limit=args.limit)
+            return authenticator.authenticate_read_rows(
+                rows, surface="cli graph search"
+            )
         # relations
-        return await store.get_entity_graph(db, args.entity)
+        evidence = await store.memories_for_entity(db, args.entity)
+        evidence = authenticator.authenticate_read_rows(
+            evidence, surface="cli graph relations"
+        )
+        if not evidence:
+            return {"entity": None, "relations": [], "memory_count": 0}
+        return await store.get_entity_graph(
+            db,
+            args.entity,
+            visible_memory_ids={row["id"] for row in evidence},
+        )
     finally:
         await db.close()
 

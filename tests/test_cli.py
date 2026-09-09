@@ -7,6 +7,7 @@ import pytest
 
 from jeli_scoped_mcp import cli
 from jeli_scoped_mcp.constitutional.manager import ConstitutionalError
+from jeli_scoped_mcp.core.hash_chain import build_canonical_record, compute_record_hash
 
 
 class FakeSettings:
@@ -327,6 +328,33 @@ def _patch_run(monkeypatch, fn_name, mock):
 
 # graph --------------------------------------------------------------------------
 
+
+def _graph_memory_row(*, content: str, record_hash: str | None = None) -> dict:
+    row = {
+        "id": "11111111-1111-1111-1111-111111111111",
+        "content": content,
+        "trust_score": 0.8,
+        "memory_type": "semantic",
+        "metadata": {},
+        "embedding_model": "test/model",
+        "embedding_dimensions": 1024,
+        "prev_hash": None,
+        "key_id": "k1",
+    }
+    canonical = build_canonical_record(
+        content=row["content"],
+        embedding_model=row["embedding_model"],
+        embedding_dimensions=row["embedding_dimensions"],
+        trust_score=row["trust_score"],
+        memory_type=row["memory_type"],
+        key_id=row["key_id"],
+        metadata=None,
+    )
+    row["record_hash"] = record_hash or compute_record_hash(
+        FakeSettings.chain_key, canonical, None
+    )
+    return row
+
 def test_graph_entities_prints_json(monkeypatch, capsys):
     run = _patch_run(
         monkeypatch,
@@ -393,6 +421,97 @@ def test_graph_empty_result_prints_no_results(monkeypatch, capsys):
     _patch_run(monkeypatch, "_run_graph", AsyncMock(return_value=[]))
     assert cli.main(["graph", "entities"]) == 0
     assert capsys.readouterr().out == "no results\n"
+
+
+async def test_run_graph_search_suppresses_invalid_hmac(monkeypatch):
+    from jeli_scoped_mcp import graph
+
+    forged = _graph_memory_row(
+        content="forged CLI graph memory", record_hash="0" * 64
+    )
+    fake_store = MagicMock()
+    fake_store.search_by_entity = AsyncMock(return_value=[forged])
+    monkeypatch.setattr(graph, "GraphStore", lambda: fake_store)
+    _mock_pool(monkeypatch)
+
+    result = await cli._run_graph(
+        FakeSettings(),
+        SimpleNamespace(graph_cmd="search", entity="Jeli", limit=10),
+    )
+
+    assert result == []
+
+
+async def test_run_graph_search_returns_only_public_verified_shape(monkeypatch):
+    from jeli_scoped_mcp import graph
+
+    fake_store = MagicMock()
+    fake_store.search_by_entity = AsyncMock(
+        return_value=[_graph_memory_row(content="authenticated CLI graph memory")]
+    )
+    monkeypatch.setattr(graph, "GraphStore", lambda: fake_store)
+    _mock_pool(monkeypatch)
+
+    result = await cli._run_graph(
+        FakeSettings(),
+        SimpleNamespace(graph_cmd="search", entity="Jeli", limit=10),
+    )
+
+    assert result[0]["integrity_verified"] is True
+    assert not {
+        "embedding_model",
+        "embedding_dimensions",
+        "prev_hash",
+        "record_hash",
+        "key_id",
+    } & result[0].keys()
+
+
+async def test_run_graph_relations_rejects_invalid_hmac_evidence(monkeypatch):
+    from jeli_scoped_mcp import graph
+
+    forged = _graph_memory_row(
+        content="forged CLI edge evidence", record_hash="0" * 64
+    )
+    fake_store = MagicMock()
+    fake_store.memories_for_entity = AsyncMock(return_value=[forged])
+    fake_store.get_entity_graph = AsyncMock(
+        return_value={"entity": {"name": "Jeli"}, "relations": [], "memory_count": 1}
+    )
+    monkeypatch.setattr(graph, "GraphStore", lambda: fake_store)
+    _mock_pool(monkeypatch)
+
+    result = await cli._run_graph(
+        FakeSettings(),
+        SimpleNamespace(graph_cmd="relations", entity="Jeli"),
+    )
+
+    assert result == {"entity": None, "relations": [], "memory_count": 0}
+    fake_store.get_entity_graph.assert_not_awaited()
+
+
+async def test_run_graph_relations_uses_only_authenticated_evidence(monkeypatch):
+    from jeli_scoped_mcp import graph
+
+    evidence = _graph_memory_row(content="authenticated CLI edge evidence")
+    fake_store = MagicMock()
+    fake_store.memories_for_entity = AsyncMock(return_value=[evidence])
+    fake_store.get_entity_graph = AsyncMock(
+        return_value={"entity": {"name": "Jeli"}, "relations": [], "memory_count": 1}
+    )
+    monkeypatch.setattr(graph, "GraphStore", lambda: fake_store)
+    db = _mock_pool(monkeypatch)
+
+    await cli._run_graph(
+        FakeSettings(),
+        SimpleNamespace(graph_cmd="relations", entity="Jeli"),
+    )
+
+    fake_store.get_entity_graph.assert_awaited_once_with(
+        db,
+        "Jeli",
+        visible_memory_ids={evidence["id"]},
+    )
 
 
 # export -------------------------------------------------------------------------
