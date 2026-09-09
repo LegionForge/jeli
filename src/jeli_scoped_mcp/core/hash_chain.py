@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import json
+from datetime import UTC, datetime
 
 
 def canonical_json(obj: dict) -> str:
@@ -92,6 +93,62 @@ def build_canonical_record(
     if metadata:
         record["metadata"] = metadata
     return canonical_json(record)
+
+
+def _canonical_timestamp(value: datetime) -> str:
+    """Normalize an authority timestamp to one stable UTC representation."""
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("canonical authority timestamps must be timezone-aware")
+    return value.astimezone(UTC).isoformat()
+
+
+def build_canonical_record_v2(
+    *,
+    record_id: str,
+    content: str,
+    embedding_model: str,
+    embedding_dimensions: int,
+    embedded_at: datetime,
+    trust_score: float,
+    memory_type: str,
+    key_id: str,
+    metadata: dict | None,
+    valid_from: datetime,
+    created_at: datetime,
+    created_by: str,
+    session_id: str | None,
+    source_agent: str | None,
+    provenance_ref: str | None,
+    amended_from: str | None,
+) -> str:
+    """Build canonical memory format v2 with attribution and time bound.
+
+    V1 remains immutable for historical verification. V2 adds every field
+    used to claim authorship, provenance, amendment origin, or read-time age.
+    Mutable lifecycle caches (valid_until / superseded_by) remain authoritative
+    only through the independently chained state-event log.
+    """
+    return canonical_json(
+        {
+            "canonical_version": 2,
+            "id": str(record_id),
+            "content": content,
+            "embedding_model": embedding_model,
+            "embedding_dimensions": embedding_dimensions,
+            "embedded_at": _canonical_timestamp(embedded_at),
+            "metadata": metadata or {},
+            "trust_hundredths": round(trust_score * 100),
+            "memory_type": memory_type,
+            "key_id": key_id,
+            "valid_from": _canonical_timestamp(valid_from),
+            "created_at": _canonical_timestamp(created_at),
+            "created_by": created_by,
+            "session_id": str(session_id) if session_id else None,
+            "source_agent": source_agent,
+            "provenance_ref": str(provenance_ref) if provenance_ref else None,
+            "amended_from": str(amended_from) if amended_from else None,
+        }
+    )
 
 
 class HashChainValidator:

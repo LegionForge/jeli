@@ -1,11 +1,15 @@
 """Unit tests for hash-chain integrity and amendment tracking."""
 
+import json
+from datetime import UTC, datetime
+
 import pytest
 
 from jeli_scoped_mcp.core import (
     AmendmentTracker,
     HashChainValidator,
     build_canonical_record,
+    build_canonical_record_v2,
     canonical_json,
     compute_record_hash,
 )
@@ -123,6 +127,66 @@ class TestBuildCanonicalRecord:
             metadata={"session_id": "abc123"},
         )
         assert "session_id" in result
+
+
+class TestBuildCanonicalRecordV2:
+    def _fields(self) -> dict:
+        witnessed_at = datetime(2026, 9, 9, 6, 0, tzinfo=UTC)
+        return {
+            "record_id": "11111111-1111-1111-1111-111111111111",
+            "content": "attributed fact",
+            "embedding_model": "test/model",
+            "embedding_dimensions": 1024,
+            "embedded_at": witnessed_at,
+            "trust_score": 0.6,
+            "memory_type": "semantic",
+            "key_id": "k1",
+            "metadata": {"content_class": "general"},
+            "valid_from": witnessed_at,
+            "created_at": witnessed_at,
+            "created_by": "jp",
+            "session_id": "22222222-2222-2222-2222-222222222222",
+            "source_agent": "hermes",
+            "provenance_ref": "33333333-3333-3333-3333-333333333333",
+            "amended_from": "44444444-4444-4444-4444-444444444444",
+        }
+
+    def test_v2_is_explicit_and_complete(self):
+        obj = json.loads(build_canonical_record_v2(**self._fields()))
+        assert obj["canonical_version"] == 2
+        assert set(self._fields()) - {"record_id", "trust_score"} <= set(obj)
+        assert obj["id"] == self._fields()["record_id"]
+        assert obj["trust_hundredths"] == 60
+
+    @pytest.mark.parametrize(
+        ("field", "replacement"),
+        [
+            ("record_id", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            ("embedded_at", datetime(2026, 9, 9, 6, 1, tzinfo=UTC)),
+            ("valid_from", datetime(2026, 9, 9, 6, 2, tzinfo=UTC)),
+            ("created_at", datetime(2026, 9, 9, 6, 3, tzinfo=UTC)),
+            ("created_by", "forged-author"),
+            ("session_id", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            ("source_agent", "forged-agent"),
+            ("provenance_ref", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            ("amended_from", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        ],
+    )
+    def test_v2_binds_each_provenance_field(self, field, replacement):
+        original_fields = self._fields()
+        changed_fields = {**original_fields, field: replacement}
+        original = compute_record_hash(
+            "secret", build_canonical_record_v2(**original_fields)
+        )
+        changed = compute_record_hash(
+            "secret", build_canonical_record_v2(**changed_fields)
+        )
+        assert changed != original
+
+    def test_v2_rejects_naive_authority_timestamp(self):
+        fields = {**self._fields(), "created_at": datetime(2026, 9, 9, 6, 0)}
+        with pytest.raises(ValueError, match="timezone-aware"):
+            build_canonical_record_v2(**fields)
 
 
 class TestHashChainValidator:

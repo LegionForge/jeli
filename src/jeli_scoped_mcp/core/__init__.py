@@ -11,6 +11,7 @@ from .hash_chain import (
     AmendmentTracker,
     HashChainValidator,
     build_canonical_record,
+    build_canonical_record_v2,
     canonical_json,
     compute_record_hash,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "compute_record_hash",
     "canonical_json",
     "build_canonical_record",
+    "build_canonical_record_v2",
     "HashChainValidator",
     "AmendmentTracker",
     "TrustSource",
