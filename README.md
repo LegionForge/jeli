@@ -1,6 +1,6 @@
 # Jeli - an optional security add on for Nate B. Jones' [Open Brain](https://github.com/NateBJones-Projects/OB1)
 
-<!-- Provenance: revised 2026-09-08T10:49:00-05:00 by JP Cruz <jp@legionforge.org>, https://legionforge.org; assisted by OpenAI Codex, provider OpenAI, model GPT-5 family (exact serving ID unavailable), role: documentation. -->
+<!-- Provenance: revised 2026-09-09T01:01:24-05:00 by JP Cruz <jp@legionforge.org>, https://legionforge.org; assisted by OpenAI Codex, provider OpenAI, model GPT-5 family (exact serving ID unavailable), role: security documentation. -->
 
 > A security and governance layer for personal memory systems. Cryptographically verifiable. Poison-resistant. Sovereign.
 
@@ -257,6 +257,8 @@ Without it, agents have unrestricted filesystem read/write and shell access. Wit
 - `search_memory`: query interface (semantic, FTS, SQL, graph traversal)
 - `summarize_session`: trigger consolidation/dreaming
 - `audit_trail`: read provenance through the same HMAC, structural-wrapper, and constitutional gates as search
+- `search_by_entity`: return only HMAC-authenticated memories, then apply the same wrappers and constitutional visibility rules
+- `get_entity_graph`: derive relations and counts only from authenticated, unquarantined, constitutionally visible evidence
 
 No shell, no arbitrary file access, all calls logged with source (agent ID, session, timestamp).
 
@@ -335,7 +337,7 @@ The three-branch governance model and the poisoning defenses are now usable from
 
 2. **Judicial precedent**: settled contradictions become case law. `jeli judicial precedents` lists resolved conflicts; `jeli judicial pending` shows conflicts escalated for human review; `jeli judicial resolve --entry-id <id> --resolution <ruling>` resolves one.
 
-3. **Entity graph**: every `capture_memory` now auto-extracts entities (people, projects, organizations, technologies). `jeli graph entities` lists known entities; `jeli graph search --entity "JP Cruz"` finds every memory mentioning someone; `jeli graph relations --entity "Jeli"` shows an entity's relations and linked-memory count.
+3. **Entity graph**: every `capture_memory` now auto-extracts entities (people, projects, organizations, technologies). `jeli graph entities` lists known entities; `jeli graph search --entity "JP Cruz"` finds every memory mentioning someone; `jeli graph relations --entity "Jeli"` shows an entity's relations and linked-memory count. Both MCP and operator graph reads authenticate supporting memory HMACs first; invalid rows are suppressed, and relation views are constrained to verified evidence IDs.
 
 4. **Memory portability**: `jeli export > backup.jsonl` streams your store (metadata, no raw vectors) to a sovereignty-preserving JSON-Lines archive; `jeli import backup.jsonl` re-imports it with SHA-256 tamper detection and provenance stamping (re-embedding locally, chaining into a fresh chain).
 

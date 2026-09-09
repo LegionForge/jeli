@@ -1,6 +1,6 @@
 # Security Policy
 
-<!-- Provenance: revised 2026-09-08T10:49:00-05:00 by JP Cruz <jp@legionforge.org>, https://legionforge.org; assisted by OpenAI Codex, provider OpenAI, model GPT-5 family (exact serving ID unavailable), role: security documentation. -->
+<!-- Provenance: revised 2026-09-09T01:01:24-05:00 by JP Cruz <jp@legionforge.org>, https://legionforge.org; assisted by OpenAI Codex, provider OpenAI, model GPT-5 family (exact serving ID unavailable), role: security documentation. -->
 
 Jeli is a security and governance layer for personal memory systems; its entire
 reason to exist is to make memory trustworthy, verifiable, and hard to poison.
@@ -102,6 +102,13 @@ This boundary is also enforced at the database role: `jeli_app` has SELECT-only
 access to constitutional rules. `add` and `revoke` require a separately supplied
 `SCOPED_MCP_CONSTITUTIONAL_DB_URL`; that credential must be made available only
 to the interactive operator process, never to MCP, Hermes, or another agent.
+
+Cryptographic authentication precedes read policy. `search_memory`, entity
+search, and both MCP and operator graph evidence paths suppress malformed or
+invalid-HMAC rows before trust decay, wrapping, ranking, rule evaluation, or
+graph derivation. Graph relations and counts are constrained to the surviving
+verified evidence IDs. `audit_trail` preserves an explicit failed-integrity
+finding for forensic use but withholds the unauthenticated content bytes.
 
 Two gates enforce rules:
 

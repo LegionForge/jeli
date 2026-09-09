@@ -1,6 +1,6 @@
 # Jeli Threat Model — v0.1
 
-<!-- Provenance: revised 2026-09-08T10:49:00-05:00 by JP Cruz <jp@legionforge.org>, https://legionforge.org; assisted by OpenAI Codex, provider OpenAI, model GPT-5 family (exact serving ID unavailable), role: threat-model documentation. -->
+<!-- Provenance: revised 2026-09-09T01:01:24-05:00 by JP Cruz <jp@legionforge.org>, https://legionforge.org; assisted by OpenAI Codex, provider OpenAI, model GPT-5 family (exact serving ID unavailable), role: threat-model documentation. -->
 
 Honest statement of what the v0.1 integrity layer does and does not guarantee.
 Overclaiming is worse than the gap: agents and users will calibrate their
@@ -96,5 +96,13 @@ read-time defenses are applied through a single `apply_read_defenses` /
 | #39 | MEDIUM | Synthesized cluster insights stored unwrapped | FIXED: `<jeli:derived>` wrap when `source_trust_min` < floor |
 | #40 | LOW | `audit_trail` returned content outside the shared read boundary | FIXED: all structural wrappers + authenticated ReadGate applied; failed-HMAC bytes withheld |
 
-The root lesson, now applied: read-time defenses live at a single choke point
-(`apply_read_defenses`), not re-implemented per surface.
+A subsequent integrity audit found that entity queries and graph aggregation
+accepted database rows before checking their memory HMAC. This is fixed for
+both MCP and operator CLI paths: content rows fail closed at the shared
+authenticator, and graph structure is computed only from surviving evidence
+IDs. The focused closure matrix covers forged normal search, audit tampering,
+entity content, graph evidence, structural wrappers, and constitutional veto.
+
+The root lesson, now applied: authentication precedes every downstream read
+decision; structural wrapping then lives at the shared `apply_read_defenses`
+choke point rather than being re-implemented per surface.
