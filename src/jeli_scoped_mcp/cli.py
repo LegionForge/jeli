@@ -261,12 +261,11 @@ async def _run_integrity_report(settings: Settings) -> dict:
 async def _run_re_embed(
     settings: Settings, dry_run: bool, batch_size: int, model: str | None
 ) -> dict:
-    """Re-embed memories whose embedding_model differs from the current model.
+    """Re-embed memories whose current index model differs from the target.
 
     Re-embedding is a privileged, constitutional exception: it updates the
-    derived index columns (embedding, embedding_model, embedding_dimensions,
-    embedded_at) which are NOT part of the canonical record hash, so the chain
-    stays valid."""
+    derived vector and its separate index-provenance triple. The original
+    embedding provenance remains an immutable part of the canonical record."""
     from .embedding.provider import EmbeddingProvider
 
     db = AsyncPostgresPool(db_url=settings.db_url, min_size=1, max_size=2)
@@ -279,15 +278,17 @@ async def _run_re_embed(
             count_row = await db.fetchrow(
                 """
                 SELECT COUNT(*) AS c FROM memory_entry
-                WHERE valid_until IS NULL AND embedding_model != $1
+                WHERE valid_until IS NULL
+                  AND COALESCE(index_embedding_model, embedding_model) != $1
                 """,
                 target_model,
             )
             sample = await db.fetchall(
                 """
                 SELECT id FROM memory_entry
-                WHERE valid_until IS NULL AND embedding_model != $1
-                ORDER BY embedded_at ASC LIMIT 10
+                WHERE valid_until IS NULL
+                  AND COALESCE(index_embedding_model, embedding_model) != $1
+                ORDER BY COALESCE(index_embedded_at, embedded_at) ASC LIMIT 10
                 """,
                 target_model,
             )
@@ -307,8 +308,9 @@ async def _run_re_embed(
             rows = await db.fetchall(
                 """
                 SELECT id, content FROM memory_entry
-                WHERE valid_until IS NULL AND embedding_model != $1
-                ORDER BY embedded_at ASC LIMIT $2
+                WHERE valid_until IS NULL
+                  AND COALESCE(index_embedding_model, embedding_model) != $1
+                ORDER BY COALESCE(index_embedded_at, embedded_at) ASC LIMIT $2
                 """,
                 target_model,
                 batch_size,
@@ -323,8 +325,8 @@ async def _run_re_embed(
                     await db.execute(
                         """
                         UPDATE memory_entry
-                        SET embedding = $1::vector, embedding_model = $2,
-                            embedding_dimensions = $3, embedded_at = $4
+                        SET embedding = $1::vector, index_embedding_model = $2,
+                            index_embedding_dimensions = $3, index_embedded_at = $4
                         WHERE id = $5
                         """,
                         json.dumps(result.vector),

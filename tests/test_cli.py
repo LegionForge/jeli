@@ -314,6 +314,44 @@ async def test_re_embed_dry_run_no_writes(monkeypatch):
     fake_embedder.embed.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_re_embed_updates_only_current_index_provenance(monkeypatch):
+    import jeli_scoped_mcp.embedding.provider as prov
+    from jeli_scoped_mcp.embedding.provider import EmbeddingResult
+
+    embedded_at = datetime.now(UTC)
+    fake_embedder = MagicMock()
+    fake_embedder.model_id = MagicMock(return_value="ollama/current-model")
+    fake_embedder.embed = AsyncMock(
+        return_value=EmbeddingResult(
+            vector=[0.1] * 1024,
+            model_id="ollama/current-model",
+            dimensions=1024,
+            embedded_at=embedded_at,
+        )
+    )
+    monkeypatch.setattr(prov.EmbeddingProvider, "from_settings", lambda s: fake_embedder)
+    db = _mock_pool(monkeypatch)
+    db.fetchall.side_effect = [
+        [{"id": "m1", "content": "re-embed me"}],
+        [],
+    ]
+
+    result = await cli._run_re_embed(
+        FakeSettings(), dry_run=False, batch_size=50, model=None
+    )
+
+    assert result["re_embedded"] == 1
+    select_sql = db.fetchall.await_args_list[0].args[0]
+    assert "COALESCE(index_embedding_model, embedding_model)" in select_sql
+    assert "COALESCE(index_embedded_at, embedded_at)" in select_sql
+    update_sql = db.execute.await_args.args[0]
+    assert "index_embedding_model = $2" in update_sql
+    assert "index_embedding_dimensions = $3" in update_sql
+    assert "index_embedded_at = $4" in update_sql
+    assert "SET embedding = $1::vector, embedding_model = $2" not in update_sql
+
+
 # ── graph / export / import ──────────────────────────────────────────────────
 
 

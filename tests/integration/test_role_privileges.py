@@ -125,6 +125,22 @@ async def test_app_column_scoped_temporal_updates_allowed(db):
 
 
 @pytest.mark.asyncio
+async def test_app_embedding_updates_are_limited_to_current_index_provenance(db):
+    await _as_jeli_app(
+        db,
+        "UPDATE memory_entry SET "
+        "index_embedding_model = index_embedding_model, "
+        "index_embedding_dimensions = index_embedding_dimensions, "
+        "index_embedded_at = index_embedded_at WHERE false",
+    )
+    with pytest.raises(Exception, match="permission denied"):
+        await _as_jeli_app(
+            db,
+            "UPDATE memory_entry SET embedding_model = embedding_model WHERE false",
+        )
+
+
+@pytest.mark.asyncio
 async def test_app_queue_tables_stay_mutable(db):
     await _as_jeli_app(
         db, "UPDATE memory_inbox SET status = 'pending' WHERE false"
