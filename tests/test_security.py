@@ -509,3 +509,23 @@ class TestCanonicalVersionMigration:
         assert migration.count('server_default="1"') == 3
         assert migration.count("canonical_version IN (1, 2)") == 3
         assert "drop_column" not in migration.split("def downgrade", 1)[1]
+
+    def test_index_embedding_provenance_is_separate_and_archive_aligned(self):
+        migration = (
+            Path(__file__).resolve().parents[1]
+            / "alembic/versions/023_index_embedding_provenance.py"
+        ).read_text(encoding="utf-8")
+
+        assert 'down_revision = "022_canonical_versions"' in migration
+        for table in ("memory_entry", "memory_archive"):
+            for column in (
+                "index_embedding_model",
+                "index_embedding_dimensions",
+                "index_embedded_at",
+            ):
+                assert f'op.add_column(\n        "{table}",\n        sa.Column(\n            "{column}"' in migration
+        assert 'for table in ("memory_entry", "memory_archive"):' in migration
+        assert "UPDATE {table}" in migration
+        assert 'f"ck_{table}_index_embedding_provenance"' in migration
+        assert "GRANT" not in migration
+        assert "REVOKE" not in migration
