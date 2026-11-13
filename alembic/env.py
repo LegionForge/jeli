@@ -6,6 +6,8 @@ from alembic import context
 import os
 from pathlib import Path
 
+from jeli_scoped_mcp.database.url import normalize_sync_db_url
+
 # This is the Alembic Config object, which provides the values of the [alembic] section
 config = context.config
 
@@ -24,7 +26,7 @@ db_url = (
     os.getenv("SCOPED_MCP_ADMIN_DB_URL")
     or os.getenv("SCOPED_MCP_DB_URL", "postgresql://jeli_app@127.0.0.1:5442/jeli")
 )
-config.set_main_option("sqlalchemy.url", db_url)
+config.set_main_option("sqlalchemy.url", normalize_sync_db_url(db_url))
 
 
 def run_migrations_offline() -> None:
