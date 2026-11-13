@@ -29,6 +29,11 @@ dependencies = [
     # Database & async I/O
     "asyncpg>=0.29.0",
     "alembic>=1.12.0",
+    # Direct pin: SQLAlchemy 2.1 changed the default postgresql:// driver to psycopg v3.
+    "sqlalchemy>=2.0,<2.2",
+    # Alembic's sync migration driver (the app itself uses asyncpg). Core dep so
+    # production installs that run `alembic upgrade` have a driver.
+    "psycopg2-binary>=2.9.0",
 
     # Web framework (optional for dev, required for HTTP transport)
     "fastapi>=0.104.0",
@@ -79,9 +84,6 @@ dev = [
     "mypy>=1.7.0",
     "httpx>=0.25.0",
     "testcontainers>=3.7.0",  # For ephemeral test Postgres
-    # Alembic's sync migration driver. The app itself uses asyncpg; without
-    # this, `alembic upgrade` fails with ModuleNotFoundError outside CI.
-    "psycopg2-binary>=2.9.0",
 ]
 
 [project.urls]
